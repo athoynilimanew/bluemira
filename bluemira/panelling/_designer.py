@@ -15,8 +15,8 @@ from bluemira.base.look_and_feel import bluemira_warn
 from bluemira.base.parameter_frame import Parameter, ParameterFrame
 from bluemira.geometry.wire import BluemiraWire
 from bluemira.optimisation.error import OptimisationError
-from eudemo.blanket.panelling._opt_problem import PanellingOptProblem
-from eudemo.blanket.panelling._paneller import Paneller
+from bluemira.panelling._opt_problem import PanellingOptProblem
+from bluemira.panelling._paneller import Paneller
 
 
 @dataclass

@@ -20,7 +20,7 @@ from bluemira.geometry.coordinates import Coordinates
 from bluemira.geometry.face import BluemiraFace
 from bluemira.geometry.tools import boolean_cut, make_polygon
 from bluemira.geometry.wire import BluemiraWire
-from eudemo.blanket.panelling import PanellingDesigner
+from bluemira.panelling import PanellingDesigner
 from eudemo.tools import get_inner_cut_point
 
 

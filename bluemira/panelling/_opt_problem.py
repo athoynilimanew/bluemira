@@ -8,7 +8,7 @@
 import numpy as np
 
 from bluemira.optimisation import ConstraintT, OptimisationProblem
-from eudemo.blanket.panelling._paneller import Paneller
+from bluemira.panelling._paneller import Paneller
 
 
 class PanellingOptProblem(OptimisationProblem):
