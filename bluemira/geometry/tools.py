@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numba as nb
 import numpy as np
 from numpy import typing as npt
+from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.spatial import ConvexHull
 
 from bluemira.base.constants import EPS
@@ -33,7 +34,7 @@ from bluemira.codes import _freecadapi as cadapi
 from bluemira.geometry.base import BluemiraGeo
 from bluemira.geometry.compound import BluemiraCompound
 from bluemira.geometry.constants import D_TOLERANCE
-from bluemira.geometry.coordinates import Coordinates
+from bluemira.geometry.coordinates import Coordinates, vector_lengthnorm
 from bluemira.geometry.error import GeometryError
 from bluemira.geometry.face import BluemiraFace
 from bluemira.geometry.shell import BluemiraShell
@@ -2259,3 +2260,91 @@ def find_clockwise_angle_2d(base: np.ndarray, vector: np.ndarray) -> np.ndarray:
     angle = np.array(np.arctan2(det, dot))
     angle[angle < 0] += 2 * np.pi
     return np.degrees(angle)
+
+
+# ======================================================================================
+# Classes for Panelling
+# ======================================================================================
+class LengthNormBoundary:
+    """Class to represent a wire interpolated over the normalised distance along it."""
+
+    def __init__(self, boundary_points: np.ndarray):
+        self.length_norm = vector_lengthnorm(boundary_points[0], boundary_points[1])
+        self._x_spline = InterpolatedUnivariateSpline(
+            self.length_norm, boundary_points[0]
+        )
+        self._z_spline = InterpolatedUnivariateSpline(
+            self.length_norm, boundary_points[1]
+        )
+
+        self.tangent_norm = norm_tangents(boundary_points)
+        self._x_tangent_spline = InterpolatedUnivariateSpline(
+            self.length_norm, self.tangent_norm[0]
+        )
+        self._z_tangent_spline = InterpolatedUnivariateSpline(
+            self.length_norm, self.tangent_norm[1]
+        )
+
+    def x(self, dist: float | np.ndarray) -> np.ndarray:
+        """
+        Find x at the given normalised distance along the boundary.
+
+        Returns
+        -------
+        :
+            x at distance along boundary
+        """
+        return self._x_spline(dist)
+
+    def z(self, dist: float | np.ndarray) -> np.ndarray:
+        """
+        Find z at the given normalised distance along the boundary.
+
+        Returns
+        -------
+        :
+            z at distance along boundary
+        """
+        return self._z_spline(dist)
+
+    def x_tangent(self, dist: float | np.ndarray) -> np.ndarray:
+        """
+        Find x at the tangent vector a given distance along the boundary.
+
+        Returns
+        -------
+        :
+            x of the tangent at distance along boundary
+        """
+        return self._x_tangent_spline(dist)
+
+    def z_tangent(self, dist: float | np.ndarray) -> np.ndarray:
+        """
+        Find z at the tangent vector a given distance along the boundary.
+
+        Returns
+        -------
+        :
+            x of the tangent at distance along boundary
+        """
+        return self._z_tangent_spline(dist)
+
+
+def norm_tangents(points: np.ndarray) -> np.ndarray:
+    """
+    Calculate the normalised tangent vector at each of the given points.
+
+    Parameters
+    ----------
+    points:
+        Array of coordinates. This must have shape (2, N), where N is
+        the number of points.
+
+    Returns
+    -------
+    :
+        The normalised vector of tangents.
+    """
+    grad = np.gradient(points, axis=1)
+    magnitudes = np.hypot(grad[0], grad[1])
+    return np.divide(grad, magnitudes)

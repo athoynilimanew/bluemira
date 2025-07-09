@@ -5,13 +5,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 import numpy as np
-from scipy.interpolate import InterpolatedUnivariateSpline
 
-from bluemira.geometry.coordinates import (
-    Coordinates,
-    vector_intersect,
-    vector_lengthnorm,
-)
+from bluemira.geometry.coordinates import Coordinates, vector_intersect
+from bluemira.geometry.tools import LengthNormBoundary
 
 
 class Paneller:
@@ -140,88 +136,3 @@ class Paneller:
         """
         panel_vecs = np.diff(self.joints(dists))
         return np.hypot(panel_vecs[0], panel_vecs[1])
-
-
-class LengthNormBoundary:
-    """Class to represent a wire interpolated over the normalised distance along it."""
-
-    def __init__(self, boundary_points: np.ndarray):
-        self.length_norm = vector_lengthnorm(boundary_points[0], boundary_points[1])
-        self._x_spline = InterpolatedUnivariateSpline(
-            self.length_norm, boundary_points[0]
-        )
-        self._z_spline = InterpolatedUnivariateSpline(
-            self.length_norm, boundary_points[1]
-        )
-
-        self.tangent_norm = norm_tangents(boundary_points)
-        self._x_tangent_spline = InterpolatedUnivariateSpline(
-            self.length_norm, self.tangent_norm[0]
-        )
-        self._z_tangent_spline = InterpolatedUnivariateSpline(
-            self.length_norm, self.tangent_norm[1]
-        )
-
-    def x(self, dist: float | np.ndarray) -> np.ndarray:
-        """
-        Find x at the given normalised distance along the boundary.
-
-        Returns
-        -------
-        :
-            x at distance along boundary
-        """
-        return self._x_spline(dist)
-
-    def z(self, dist: float | np.ndarray) -> np.ndarray:
-        """
-        Find z at the given normalised distance along the boundary.
-
-        Returns
-        -------
-        :
-            z at distance along boundary
-        """
-        return self._z_spline(dist)
-
-    def x_tangent(self, dist: float | np.ndarray) -> np.ndarray:
-        """
-        Find x at the tangent vector a given distance along the boundary.
-
-        Returns
-        -------
-        :
-            x of the tangent at distance along boundary
-        """
-        return self._x_tangent_spline(dist)
-
-    def z_tangent(self, dist: float | np.ndarray) -> np.ndarray:
-        """
-        Find z at the tangent vector a given distance along the boundary.
-
-        Returns
-        -------
-        :
-            x of the tangent at distance along boundary
-        """
-        return self._z_tangent_spline(dist)
-
-
-def norm_tangents(points: np.ndarray) -> np.ndarray:
-    """
-    Calculate the normalised tangent vector at each of the given points.
-
-    Parameters
-    ----------
-    points:
-        Array of coordinates. This must have shape (2, N), where N is
-        the number of points.
-
-    Returns
-    -------
-    :
-        The normalised vector of tangents.
-    """
-    grad = np.gradient(points, axis=1)
-    magnitudes = np.hypot(grad[0], grad[1])
-    return np.divide(grad, magnitudes)
