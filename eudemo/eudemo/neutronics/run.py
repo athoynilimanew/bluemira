@@ -25,19 +25,25 @@ from bluemira.radiation_transport.neutronics.blanket_data import (
 )
 from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
 from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
+    GeometryType,
     NeutronicsReactor,
+    ReactorGeometry,
 )
 
 if TYPE_CHECKING:
     import numpy.typing as npt
     from matplotlib.axes import Axes
     from matproplib.conditions import OperationalConditions
+    from collections.abc import Callable
+
+    import openmc.source
 
     from bluemira.base.parameter_frame import ParameterFrame
     from bluemira.base.reactor import ComponentManager
     from bluemira.codes.openmc.solver import NeutronSourceCreator
     from bluemira.equilibria.equilibrium import Equilibrium
     from bluemira.geometry.wire import BluemiraWire
+    from bluemira.codes.openmc.params import PlasmaSourceParameters
     from eudemo.blanket import Blanket
     from eudemo.ivc import IVCShapes
     from eudemo.vacuum_vessel import VacuumVessel
@@ -51,13 +57,15 @@ class EUDEMONeutronicsCSGReactor(NeutronicsReactor):
         ivc_shapes: IVCShapes,
         blanket: Blanket,
         vacuum_vessel: VacuumVessel,
-    ) -> tuple[TokamakDimensions, BluemiraWire, npt.NDArray, BluemiraWire, BluemiraWire]:
+    ) -> tuple[TokamakDimensions, ReactorGeometry]:
         return (
             TokamakDimensions.from_parameterframe(self.params, blanket.r_inner_cut),
-            ivc_shapes.div_internal_boundary,
-            blanket.panel_points.T,
-            ivc_shapes.outer_boundary,
-            vacuum_vessel.xz_boundary,
+            ReactorGeometry(
+                divertor_wires=(ivc_shapes.div_internal_boundary, None),
+                panel_break_points=blanket.panel_points.T,
+                vacuum_vessel_inner_wire=ivc_shapes.outer_boundary,
+                vacuum_vessel_outer_wire=vacuum_vessel.xz_boundary,
+            ),
         )
 
 
@@ -121,8 +129,18 @@ def run_csg_neutronics(
         source="CSG Neutronics",
     )
     neutronics_csg = EUDEMONeutronicsCSGReactor(
-        params, ivc_shapes, blanket, vacuum_vessel, material_library
+        geometry_type=GeometryType.SN_INTEGRATED,
+        params=csg_params,
+        divertor=ivc_shapes,
+        blanket=blanket,
+        vacuum_vessel=vacuum_vessel,
+        materials_library=material_library,
     )
+    if source is None:
+        try:
+            from bluemira.codes.openmc.sources import make_pps_source  # noqa: PLC0415
+        except ImportError:
+            raise NeutronicsError("Cannot import neutronics source") from None
 
     solver = neutronics_code_solver(
         params,
