@@ -84,15 +84,10 @@ class ReactorGeometry:
     panel_break_points: npt.NDArray
     vacuum_vessel_inner_wire: BluemiraWire
     vacuum_vessel_outer_wire: BluemiraWire
-    first_wall_inner_wire: BluemiraWire | None = (
-        None  # Only required for GeometryType.DN_SEPARATE
-    )
-    first_wall_outer_wire: BluemiraWire | None = (
-        None  # Only required for GeometryType.DN_SEPARATE
-    )
-    blanket_wires: list[BluemiraWire] | None = (
-        None  # Only required for GeometryType.DN_SEPARATE, multiple wires if layered
-    )
+
+    # Only required for GeometryType.DN_SEPARATE
+    first_wall_inner_wire: BluemiraWire | None = None
+    blanket_wires: list[BluemiraWire] | None = None
 
 
 @dataclass
@@ -257,12 +252,13 @@ class NeutronicsReactor(ABC):
         self,
         geometry_type: GeometryType,
         params: dict | ParameterFrame,
-        divertor: ComponentManager,
         blanket: ComponentManager,
         vacuum_vessel: ComponentManager,
-        materials_library: NeutronicsMaterials,
+        divertor: ComponentManager | None = None,
         first_wall: ComponentManager | None = None,
+        materials_library: NeutronicsMaterials | None = None,
         *,
+        panel_points: npt.NDArray | None = None,
         snap_to_horizontal_angle: float = 45,
         blanket_discretisation: int = 10,
         divertor_discretisation: int = 5,
@@ -273,7 +269,7 @@ class NeutronicsReactor(ABC):
         self.material_library = materials_library
         self.geometry_type = geometry_type
         (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
-            divertor, blanket, vacuum_vessel, first_wall
+            divertor, blanket, vacuum_vessel, first_wall, panel_points
         )
 
         self._pre_cell_stage = self._create_pre_cell_stage(
@@ -351,11 +347,11 @@ class NeutronicsReactor(ABC):
     @abstractmethod
     def _get_wires_from_components(
         self,
-        divertor: ComponentManager,
-        blanket: ComponentManager,
-        vacuum_vessel: ComponentManager,
-        first_wall: ComponentManager
-        | None = None,  # Only for separated FW+Blanket module
+        divertor: ComponentManager | None = None,
+        blanket: ComponentManager | None = None,
+        vacuum_vessel: ComponentManager | None = None,
+        first_wall: ComponentManager | None = None,
+        panel_points: npt.NDArray | None = None,
     ) -> tuple[TokamakDimensions, ReactorGeometry]:
         """Get wires from components"""
         ...
