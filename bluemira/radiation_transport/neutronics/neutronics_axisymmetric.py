@@ -95,7 +95,8 @@ class CuttingStage:
     """Stage of making cuts to the exterior curve/ outer boundary."""
 
     blanket: PanelsAndExteriorCurve
-    divertor: DivertorWireAndExteriorCurve
+    divertor_1: DivertorWireAndExteriorCurve
+    divertor_2: DivertorWireAndExteriorCurve | None = None  # DN case
 
 
 class PreCellStage:
@@ -288,13 +289,13 @@ class NeutronicsReactor(ABC):
                 self.geom.vacuum_vessel_inner_wire,
                 self.geom.vacuum_vessel_outer_wire,
             ),
-            divertor=DivertorWireAndExteriorCurve(
+            divertor_1=DivertorWireAndExteriorCurve(
                 self.geom.divertor_wires[0],
                 self.geom.vacuum_vessel_inner_wire,
                 self.geom.vacuum_vessel_outer_wire,
             ),
         )
-        divertor = cutting.divertor.make_divertor_pre_cell_array(
+        divertor = cutting.divertor_1.make_divertor_pre_cell_array(
             discretisation_level=divertor_discretisation
         )
         first, last = divertor.exterior_vertices()[(0, -1),]
