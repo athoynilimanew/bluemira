@@ -17,6 +17,11 @@ from bluemira.base.look_and_feel import bluemira_print
 from bluemira.codes.openmc.output import OpenMCCSGResult, OpenMCDAGMCResult
 from bluemira.codes.openmc.solver import OpenMCDAGMCNeutronicsSolver
 from bluemira.codes.openmc.sources import make_tokamak_source
+from bluemira.codes.openmc.make_csg import (
+    BluemiraNeutronicsCSG,
+    make_cell_arrays,
+)
+from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.codes.wrapper import neutronics_code_solver
 from bluemira.radiation_transport.neutronics.blanket_data import (
     BlanketType,
@@ -130,6 +135,8 @@ def run_csg_neutronics(
         },
         source="CSG Neutronics",
     )
+
+    # TODO: Directly make cell arrays
     neutronics_csg = EUDEMONeutronicsCSGReactor(
         geometry_type=GeometryType.SN_INTEGRATED,
         params=csg_params,
@@ -139,6 +146,13 @@ def run_csg_neutronics(
         materials_library=material_library,
         panel_points=blanket.panel_points.T,
     )
+
+    neutronics_cell_arrays = make_cell_arrays(
+        pre_cell_reactor=neutronics_csg,
+        csg=BluemiraNeutronicsCSG(),
+        materials=MaterialsLibrary.from_neutronics_materials(material_library),
+    )
+
     if source is None:
         try:
             from bluemira.codes.openmc.sources import make_pps_source  # noqa: PLC0415
@@ -148,7 +162,7 @@ def run_csg_neutronics(
     solver = neutronics_code_solver(
         params,
         build_config,
-        neutronics_csg,
+        neutronics_cell_arrays,
         eq,
         source=source or make_tokamak_source,
         op_cond=op_cond,

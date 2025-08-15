@@ -29,11 +29,7 @@ from bluemira.codes.interface import (
     CodesTeardown,
 )
 from bluemira.codes.openmc.make_csg import (
-    BluemiraNeutronicsCSG,
-    CellStage,
-    make_cell_arrays,
 )
-from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.codes.openmc.output import (
     NeutronicsOutputParams,
     OpenMCCSGResult,
