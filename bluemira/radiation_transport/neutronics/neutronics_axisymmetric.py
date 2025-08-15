@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,6 +39,29 @@ if TYPE_CHECKING:
     from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 
 
+class GeometryType(Enum):
+    """Enumeration of geometry types."""
+
+    # Single-null geometry with integrated FW & blanket, plus divertor and vessel
+    SN_INTEGRATED = auto()
+
+    # Double-null geometry with integrated FW & blanket, plus divertors and vessel
+    DN_INTEGRATED = auto()
+
+    # Double-null geometry with separate FW, blanket, divertors, and vessel
+    DN_SEPARATE = auto()
+
+    @classmethod
+    def _missing_(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(
+                f"{cls.__name__} has no type {value}"
+                f"please select from {(*cls._member_names_,)}"
+            ) from None
+
+
 @dataclass
 class ReactorGeometry:
     """
@@ -50,16 +74,25 @@ class ReactorGeometry:
     panel_break_points:
         The start and end points for each first-wall panel
         (for N panels, the shape is (N+1, 2)).
-    boundary:
+    vacuum_vessel_inner_wire:
         interface between the inside of the vacuum vessel and the outside of the blanket
     vacuum_vessel_wire:
         The outer-boundary of the vacuum vessel
     """
 
-    divertor_wire: BluemiraWire
+    divertor_wires: tuple[BluemiraWire, BluemiraWire | None]  # only one for SN, 2 for DN
     panel_break_points: npt.NDArray
-    boundary: BluemiraWire
-    vacuum_vessel_wire: BluemiraWire
+    vacuum_vessel_inner_wire: BluemiraWire
+    vacuum_vessel_outer_wire: BluemiraWire
+    first_wall_inner_wire: BluemiraWire | None = (
+        None  # Only required for GeometryType.DN_SEPARATE
+    )
+    first_wall_outer_wire: BluemiraWire | None = (
+        None  # Only required for GeometryType.DN_SEPARATE
+    )
+    blanket_wires: list[BluemiraWire] | None = (
+        None  # Only required for GeometryType.DN_SEPARATE, multiple wires if layered
+    )
 
 
 @dataclass
@@ -222,6 +255,7 @@ class NeutronicsReactor(ABC):
 
     def __init__(
         self,
+        geometry_type: GeometryType,
         params: dict | ParameterFrame,
         divertor: ComponentManager,
         blanket: ComponentManager,
@@ -236,16 +270,9 @@ class NeutronicsReactor(ABC):
 
         self.params = make_parameter_frame(params, self.param_cls)
         self.material_library = materials_library
-        (
-            self.tokamak_dimensions,
-            divertor_wire,
-            panel_points,
-            blanket_wire,
-            vacuum_vessel_wire,
-        ) = self._get_wires_from_components(divertor, blanket, vacuum_vessel)
-
-        self.geom = ReactorGeometry(
-            divertor_wire, panel_points, blanket_wire, vacuum_vessel_wire
+        self.geometry_type = geometry_type
+        (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
+            divertor, blanket, vacuum_vessel
         )
 
         self._pre_cell_stage = self._create_pre_cell_stage(
@@ -255,14 +282,19 @@ class NeutronicsReactor(ABC):
     def _create_pre_cell_stage(
         self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
     ):
+        if self.geometry_type != GeometryType.SN_INTEGRATED:
+            raise NotImplementedError  # not implemented for now
+
         cutting = CuttingStage(
             blanket=PanelsAndExteriorCurve(
                 self.geom.panel_break_points,
-                self.geom.boundary,
-                self.geom.vacuum_vessel_wire,
+                self.geom.vacuum_vessel_inner_wire,
+                self.geom.vacuum_vessel_outer_wire,
             ),
             divertor=DivertorWireAndExteriorCurve(
-                self.geom.divertor_wire, self.geom.boundary, self.geom.vacuum_vessel_wire
+                self.geom.divertor_wires[0],
+                self.geom.vacuum_vessel_inner_wire,
+                self.geom.vacuum_vessel_outer_wire,
             ),
         )
         divertor = cutting.divertor.make_divertor_pre_cell_array(
@@ -321,6 +353,8 @@ class NeutronicsReactor(ABC):
         divertor: ComponentManager,
         blanket: ComponentManager,
         vacuum_vessel: ComponentManager,
-    ) -> tuple[TokamakDimensions, BluemiraWire, npt.NDArray, BluemiraWire, BluemiraWire]:
+        first_wall: ComponentManager
+        | None = None,  # Only for separated FW+Blanket module
+    ) -> tuple[TokamakDimensions, ReactorGeometry]:
         """Get wires from components"""
         ...

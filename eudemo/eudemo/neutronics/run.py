@@ -17,21 +17,21 @@ from bluemira.radiation_transport.neutronics.blanket_data import (
 )
 from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
 from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
+    GeometryType,
     NeutronicsReactor,
     NeutronicsReactorParameterFrame,
+    ReactorGeometry,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy.typing as npt
     import openmc.source
 
     from bluemira.base.parameter_frame import ParameterFrame
     from bluemira.base.reactor import ComponentManager
     from bluemira.codes.openmc.output import OpenMCResult
     from bluemira.codes.openmc.params import PlasmaSourceParameters
-    from bluemira.geometry.wire import BluemiraWire
     from eudemo.blanket import Blanket
     from eudemo.ivc import IVCShapes
     from eudemo.vacuum_vessel import VacuumVessel
@@ -45,13 +45,15 @@ class EUDEMONeutronicsCSGReactor(NeutronicsReactor):
         ivc_shapes: IVCShapes,
         blanket: Blanket,
         vacuum_vessel: VacuumVessel,
-    ) -> tuple[TokamakDimensions, BluemiraWire, npt.NDArray, BluemiraWire, BluemiraWire]:
+    ) -> tuple[TokamakDimensions, ReactorGeometry]:
         return (
             TokamakDimensions.from_parameterframe(self.params, blanket.r_inner_cut),
-            ivc_shapes.div_internal_boundary,
-            blanket.panel_points.T,
-            ivc_shapes.outer_boundary,
-            vacuum_vessel.xz_boundary,
+            ReactorGeometry(
+                divertor_wires=(ivc_shapes.div_internal_boundary, None),
+                panel_break_points=blanket.panel_points.T,
+                vacuum_vessel_inner_wire=ivc_shapes.outer_boundary,
+                vacuum_vessel_outer_wire=vacuum_vessel.xz_boundary,
+            ),
         )
 
 
@@ -98,7 +100,12 @@ def run_neutronics(
         source="Neutronics",
     )
     neutronics_csg = EUDEMONeutronicsCSGReactor(
-        csg_params, ivc_shapes, blanket, vacuum_vessel, material_library
+        geometry_type=GeometryType.SN_INTEGRATED,
+        params=csg_params,
+        divertor=ivc_shapes,
+        blanket=blanket,
+        vacuum_vessel=vacuum_vessel,
+        materials_library=material_library,
     )
     if source is None:
         try:
