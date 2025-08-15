@@ -31,11 +31,8 @@ from bluemira.codes.interface import (
 )
 from bluemira.codes.openmc.make_csg import (
     BlanketCellArray,
-    BluemiraNeutronicsCSG,
     DivertorCellArray,
-    make_cell_arrays,
 )
-from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.codes.openmc.output import OpenMCResult
 from bluemira.codes.openmc.params import (
     OpenMCNeutronicsSolverParams,
@@ -108,7 +105,6 @@ class Setup(CodesSetup):
         cross_section_xml: str,
         source,
         cell_arrays,
-        pre_cell_model,
         materials,
     ):
         super().__init__(None, codes_name)
@@ -119,7 +115,6 @@ class Setup(CodesSetup):
         self.source = source
         self.blanket_cell_array = cell_arrays.blanket
         self.divertor_cell_array = cell_arrays.divertor
-        self.pre_cell_model = pre_cell_model
         self.materials = materials
         self.matlist = attrgetter(
             "outb_sf_mat",
@@ -219,7 +214,7 @@ class Setup(CodesSetup):
     ):
         """Plot stage for setup openmc"""
         with self._base_setup(run_mode, debug=debug):
-            z_max, _z_min, r_max, _r_min = self.pre_cell_model.bounding_box
+            z_max, _z_min, r_max, _r_min = self.cell_model.bounding_box
             plot_width_0 = r_max * 2.1
             plot_width_1 = z_max * 3.1
             plot = openmc.Plot()
@@ -245,7 +240,7 @@ class Setup(CodesSetup):
         debug: bool = False,
     ):
         """Stochastic volume stage for setup openmc"""
-        z_max, z_min, r_max, r_min = self.pre_cell_model.bounding_box
+        z_max, z_min, r_max, r_min = self.cell_model.bounding_box
 
         min_xyz = (r_min, r_min, z_min)
         max_xyz = (r_max, r_max, z_max)
@@ -416,7 +411,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
         self,
         params: dict | ParameterFrame,
         build_config: dict,
-        neutronics_pre_cell_model,
+        neutronics_cell_model,
         source: Callable[[PlasmaSourceParameters], openmc.source.SourceBase],
         tally_function: TALLY_FUNCTION_TYPE | None = None,
     ):
@@ -426,15 +421,8 @@ class OpenMCNeutronicsSolver(CodesSolver):
         self.out_path = self.build_config.get("neutronics_output_path", Path.cwd())
 
         self.source = source
-
-        self.pre_cell_model = neutronics_pre_cell_model
-        self.materials = MaterialsLibrary.from_neutronics_materials(
-            self.pre_cell_model.material_library
-        )
-
-        self.cell_arrays = make_cell_arrays(
-            self.pre_cell_model, BluemiraNeutronicsCSG(), self.materials, control_id=True
-        )
+        self.cell_arrays = neutronics_cell_model
+        self.materials = self.cell_arrays.material_library
 
         self.tally_function = filter_cells if tally_function is None else tally_function
 
@@ -490,7 +478,6 @@ class OpenMCNeutronicsSolver(CodesSolver):
             str(self.build_config["cross_section_xml"]),
             self.source,
             self.cell_arrays,
-            self.pre_cell_model,
             self.materials,
         )
         self._run = self.run_cls(self.out_path, self.name)

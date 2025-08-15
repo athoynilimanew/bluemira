@@ -82,6 +82,8 @@ class CellStage:
     radiation_shield: openmc.Cell
     ext_void: openmc.Cell
     universe: openmc.region.Intersection
+    materials: MaterialsLibrary
+    bounding_box: tuple[float, ...]
 
     @property
     def cells(self):
@@ -818,6 +820,8 @@ def make_cell_arrays(
         radiation_shield=rad_shield,
         ext_void=ext_void,
         universe=universe,
+        materials=pre_cell_reactor.material_library,
+        bounding_box=pre_cell_reactor.bounding_box,
     )
     cell_stage.set_volumes()
 
