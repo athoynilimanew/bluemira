@@ -261,6 +261,7 @@ class NeutronicsReactor(ABC):
         blanket: ComponentManager,
         vacuum_vessel: ComponentManager,
         materials_library: NeutronicsMaterials,
+        first_wall: ComponentManager | None = None,
         *,
         snap_to_horizontal_angle: float = 45,
         blanket_discretisation: int = 10,
@@ -272,7 +273,7 @@ class NeutronicsReactor(ABC):
         self.material_library = materials_library
         self.geometry_type = geometry_type
         (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
-            divertor, blanket, vacuum_vessel
+            divertor, blanket, vacuum_vessel, first_wall
         )
 
         self._pre_cell_stage = self._create_pre_cell_stage(
