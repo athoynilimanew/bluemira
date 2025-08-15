@@ -29,10 +29,7 @@ from bluemira.codes.interface import (
     CodesTask,
     CodesTeardown,
 )
-from bluemira.codes.openmc.make_csg import (
-    BlanketCellArray,
-    DivertorCellArray,
-)
+from bluemira.codes.openmc.make_csg import BlanketCellArray, CellStage, DivertorCellArray
 from bluemira.codes.openmc.output import OpenMCResult
 from bluemira.codes.openmc.params import (
     OpenMCNeutronicsSolverParams,
@@ -411,7 +408,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
         self,
         params: dict | ParameterFrame,
         build_config: dict,
-        neutronics_cell_model,
+        neutronics_cell_model: CellStage,
         source: Callable[[PlasmaSourceParameters], openmc.source.SourceBase],
         tally_function: TALLY_FUNCTION_TYPE | None = None,
     ):
