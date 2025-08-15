@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import openmc.source
+    from numpy import typing as npt
 
     from bluemira.base.parameter_frame import ParameterFrame
     from bluemira.base.reactor import ComponentManager
@@ -45,12 +46,13 @@ class EUDEMONeutronicsCSGReactor(NeutronicsReactor):
         ivc_shapes: IVCShapes,
         blanket: Blanket,
         vacuum_vessel: VacuumVessel,
+        panel_points: npt.NDArray,
     ) -> tuple[TokamakDimensions, ReactorGeometry]:
         return (
             TokamakDimensions.from_parameterframe(self.params, blanket.r_inner_cut),
             ReactorGeometry(
                 divertor_wires=(ivc_shapes.div_internal_boundary, None),
-                panel_break_points=blanket.panel_points.T,
+                panel_break_points=panel_points,
                 vacuum_vessel_inner_wire=ivc_shapes.outer_boundary,
                 vacuum_vessel_outer_wire=vacuum_vessel.xz_boundary,
             ),
@@ -106,6 +108,7 @@ def run_neutronics(
         blanket=blanket,
         vacuum_vessel=vacuum_vessel,
         materials_library=material_library,
+        panel_points=blanket.panel_points.T,
     )
     if source is None:
         try:
