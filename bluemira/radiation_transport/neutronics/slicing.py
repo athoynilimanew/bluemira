@@ -351,7 +351,7 @@ def break_wire_into_convex_chunks(
         elif interior_curve_turned_over_180:
             # curled in on itself too much.
             bluemira_warn(
-                "Divertor wire geometry possibly too extreme for program "
+                "The wire geometry possibly too extreme for program "
                 "to handle. Check pre-cell visually by using the .plot_2d() methods "
                 "on the relevant DivertorPreCell and DivertorPreCellArray."
             )
@@ -686,6 +686,8 @@ class DivertorWireAndExteriorCurve:
         vv_exterior: BluemiraWire,
         curvature_sign: int = -1,
         tolerance: float = TOLERANCE_DEGREES,
+        *,
+        is_lower: bool = True,
     ):
         """
         Instantiate from a BluemiraWire of the divertor and a BluemiraWire of the
@@ -705,6 +707,8 @@ class DivertorWireAndExteriorCurve:
             on the RHHP cross-section of the tokamak.
         curvature_sign and tolerance
             to be used in breaking wire into convex chunks
+        is_lower
+            if the divertor in question is a lower divertor (important in case of DN)
         """
         self.convex_segments = break_wire_into_convex_chunks(
             wire=divertor_wire, curvature_sign=curvature_sign, tolerance=tolerance
@@ -716,10 +720,23 @@ class DivertorWireAndExteriorCurve:
         self.tangents = [  # shape = (N, 2, 3)
             seg.tangents for seg in chain.from_iterable(self.convex_segments)
         ]
-        self.center_point = np.array([  # center of the divertor
-            (self.key_points[0, 0] + self.key_points[-1, 0]) / 2,  # mean x
-            self.key_points[:, -1].max(),  # highest z
-        ])
+        # Generalised center point determination for all divertor shapes
+        # Defined as: center of the "attachment plane" of the divertor
+        # with the first wall chamber
+        if is_lower:
+            highest_z = self.key_points[:, -1].max()
+            center_x = (
+                self.key_points[np.isclose(self.key_points[:, -1], highest_z), 0]
+            ).mean()
+
+            self.center_point = np.array([center_x, highest_z])
+        else:  # upper divertor
+            lowest_z = self.key_points[:, -1].min()
+            center_x = (
+                self.key_points[np.isclose(self.key_points[:, -1], lowest_z), 0]
+            ).mean()
+            self.center_point = np.array([center_x, lowest_z])
+
         self.vv_interior = vv_interior
         self.vv_exterior = vv_exterior
 
