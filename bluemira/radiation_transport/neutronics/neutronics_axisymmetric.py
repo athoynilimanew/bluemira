@@ -48,11 +48,8 @@ class GeometryType(Enum):
     # Single-null geometry with integrated FW & blanket, plus divertor and vessel
     SN_INTEGRATED = auto()
 
-    # Double-null geometry with integrated FW & blanket, plus divertors and vessel
-    DN_INTEGRATED = auto()
-
-    # Double-null geometry with separate FW, blanket, divertors, and vessel
-    DN_SEPARATE = auto()
+    # Other
+    CUSTOM = auto()
 
     @classmethod
     def _missing_(cls, value: str):
@@ -301,9 +298,6 @@ class NeutronicsReactor(ABC):
     def _create_pre_cell_stage(
         self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
     ):
-        if self.geometry_type != GeometryType.SN_INTEGRATED:
-            raise NotImplementedError  # not implemented for now
-
         cutting = CuttingStage(
             blanket=PanelsAndExteriorCurve(
                 self.geom.panel_break_points,
