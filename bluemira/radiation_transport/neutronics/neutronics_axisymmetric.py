@@ -18,6 +18,8 @@ import numpy as np
 
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import Parameter, ParameterFrame, make_parameter_frame
+from bluemira.codes.openmc.make_csg import BluemiraNeutronicsCSG, make_cell_arrays
+from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.geometry.plane import calculate_plane_dir
 from bluemira.geometry.tools import get_wire_plane_intersect, make_polygon
 from bluemira.radiation_transport.neutronics.make_pre_cell import PreCell
@@ -267,7 +269,9 @@ class NeutronicsReactor(ABC):
         bluemira_print("Creating axisymmetric CSG neutronics model")
 
         self.params = make_parameter_frame(params, self.param_cls)
-        self.material_library = materials_library
+        self.material_library = MaterialsLibrary.from_neutronics_materials(
+            materials_library
+        )
         self.geometry_type = geometry_type
         (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
             divertor, blanket, vacuum_vessel, first_wall, panel_points
@@ -275,6 +279,14 @@ class NeutronicsReactor(ABC):
 
         self._pre_cell_stage = self._create_pre_cell_stage(
             blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
+        )
+
+        self.cell_arrays = make_cell_arrays(
+            pre_cell_stage=self._pre_cell_stage,
+            csg=BluemiraNeutronicsCSG(),
+            materials=self.material_library,
+            tokamak_dimensions=self.tokamak_dimensions,
+            control_id=True,
         )
 
     def _create_pre_cell_stage(
