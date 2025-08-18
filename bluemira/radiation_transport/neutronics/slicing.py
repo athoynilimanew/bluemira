@@ -305,7 +305,7 @@ def straight_lines_deviate_less_than(
 
 
 def break_wire_into_convex_chunks(
-    wire: BluemiraWire, curvature_sign: int = -1
+    wire: BluemiraWire, curvature_sign: int = -1, tolerance: float = TOLERANCE_DEGREES
 ) -> list[WireInfoList]:
     """
     Break a wire up into several convex wires.
@@ -331,7 +331,7 @@ def break_wire_into_convex_chunks(
     def add_to_chunk(this_seg: WireInfo) -> None:
         """Add the info and wire into the current chunk and current wire."""
         if this_chunk and straight_lines_deviate_less_than(
-            this_chunk[-1], this_seg, TOLERANCE_DEGREES
+            this_chunk[-1], this_seg, tolerance
         ):
             # modify the previous line directly
             this_chunk[-1].key_points = StraightLineInfo(
@@ -344,9 +344,7 @@ def break_wire_into_convex_chunks(
         add_to_chunk(wire_segments[no])
         prev_end_tangent = this_chunk[-1].tangents[-1]
         next_start_tangent = w_s.tangents[0]
-        if deviate_less_than(
-            this_chunk[-1].tangents[1], w_s.tangents[0], TOLERANCE_DEGREES
-        ):
+        if deviate_less_than(this_chunk[-1].tangents[1], w_s.tangents[0], tolerance):
             continue
         interior_curve_turned_over_180 = turned_morethan_180(
             chunk_start_tangent, next_start_tangent, curvature_sign
@@ -693,6 +691,8 @@ class DivertorWireAndExteriorCurve:
         divertor_wire: BluemiraWire,
         vv_interior: BluemiraWire,
         vv_exterior: BluemiraWire,
+        curvature_sign: int = -1,
+        tolerance: float = TOLERANCE_DEGREES,
     ):
         """
         Instantiate from a BluemiraWire of the divertor and a BluemiraWire of the
@@ -710,8 +710,12 @@ class DivertorWireAndExteriorCurve:
         vv_exterior
             A BluemiraWire that runs clockwise, showing the outside of the vacuum vessel
             on the RHHP cross-section of the tokamak.
+        curvature_sign and tolerance
+            to be used in breaking wire into convex chunks
         """
-        self.convex_segments = break_wire_into_convex_chunks(divertor_wire)
+        self.convex_segments = break_wire_into_convex_chunks(
+            wire=divertor_wire, curvature_sign=curvature_sign, tolerance=tolerance
+        )
         self.key_points = np.array([  # shape = (N+1, 3)
             *(seg.key_points[0] for seg in chain.from_iterable(self.convex_segments)),
             self.convex_segments[-1][-1].key_points[1],
