@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from numpy import typing as npt
 
     from bluemira.base.reactor import ComponentManager
+    from bluemira.codes.openmc.make_csg import CellStage
     from bluemira.geometry.wire import BluemiraWire
     from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
     from bluemira.radiation_transport.neutronics.make_pre_cell import (
@@ -277,17 +278,25 @@ class NeutronicsReactor(ABC):
             divertor, blanket, vacuum_vessel, first_wall, panel_points
         )
 
-        self._pre_cell_stage = self._create_pre_cell_stage(
-            blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
-        )
+        if self.geometry_type == GeometryType.SN_INTEGRATED:
+            self._pre_cell_stage = self._create_pre_cell_stage(
+                blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
+            )
 
-        self.cell_arrays = make_cell_arrays(
-            pre_cell_stage=self._pre_cell_stage,
-            csg=BluemiraNeutronicsCSG(),
-            materials=self.material_library,
-            tokamak_dimensions=self.tokamak_dimensions,
-            control_id=True,
-        )
+            self.cell_arrays = make_cell_arrays(
+                pre_cell_stage=self._pre_cell_stage,
+                csg=BluemiraNeutronicsCSG(),
+                materials=self.material_library,
+                tokamak_dimensions=self.tokamak_dimensions,
+                control_id=True,
+            )
+        else:  # customised, leave to users for now
+            self._pre_cell_stage, self._cell_arrays = self._customised_cell_stages(
+                blanket_discretisation=blanket_discretisation,
+                divertor_discretisation=divertor_discretisation,
+                snap_to_horizontal_angle=snap_to_horizontal_angle,
+                control_id=True,
+            )
 
     def _create_pre_cell_stage(
         self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
@@ -367,4 +376,16 @@ class NeutronicsReactor(ABC):
         panel_points: npt.NDArray | None = None,
     ) -> tuple[TokamakDimensions, ReactorGeometry]:
         """Get wires from components"""
+        ...
+
+    @abstractmethod
+    def _customised_cell_stages(
+        self,
+        blanket_discretisation: int,
+        divertor_discretisation: int,
+        snap_to_horizontal_angle: float,
+        *,
+        control_id: bool = False,
+    ) -> tuple[PreCellStage, CellStage]:
+        """Customised Pre-cell making stage"""
         ...
