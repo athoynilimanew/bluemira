@@ -9,11 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bluemira.codes.openmc.make_csg import (
-    BluemiraNeutronicsCSG,
-    make_cell_arrays,
-)
-from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.codes.wrapper import neutronics_code_solver
 from bluemira.radiation_transport.error import NeutronicsError
 from bluemira.radiation_transport.neutronics.blanket_data import (
@@ -118,12 +113,6 @@ def run_neutronics(
         panel_points=blanket.panel_points.T,
     )
 
-    neutronics_cell_arrays = make_cell_arrays(
-        pre_cell_reactor=neutronics_csg,
-        csg=BluemiraNeutronicsCSG(),
-        materials=MaterialsLibrary.from_neutronics_materials(material_library),
-    )
-
     if source is None:
         try:
             from bluemira.codes.openmc.sources import make_pps_source  # noqa: PLC0415
@@ -133,7 +122,7 @@ def run_neutronics(
     solver = neutronics_code_solver(
         params,
         build_config,
-        neutronics_cell_arrays,
+        neutronics_csg.cell_arrays,
         source=source or make_pps_source,
         tally_function=tally_function,
     )
