@@ -80,14 +80,10 @@ class ReactorGeometry:
         The outer-boundary of the vacuum vessel
     """
 
-    divertor_wires: tuple[BluemiraWire, BluemiraWire | None]  # only one for SN, 2 for DN
+    divertor_wire: BluemiraWire
     panel_break_points: npt.NDArray
     vacuum_vessel_inner_wire: BluemiraWire
     vacuum_vessel_outer_wire: BluemiraWire
-
-    # Only required for GeometryType.DN_SEPARATE
-    first_wall_inner_wire: BluemiraWire | None = None
-    blanket_wires: list[BluemiraWire] | None = None
 
 
 @dataclass
@@ -304,7 +300,7 @@ class NeutronicsReactor(ABC):
                 self.geom.vacuum_vessel_outer_wire,
             ),
             divertor=DivertorWireAndExteriorCurve(
-                self.geom.divertor_wires[0],
+                self.geom.divertor_wire,
                 self.geom.vacuum_vessel_inner_wire,
                 self.geom.vacuum_vessel_outer_wire,
             ),
