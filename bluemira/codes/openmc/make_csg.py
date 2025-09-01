@@ -11,6 +11,7 @@ in this module are in SI (distrance:[m]) unless otherwise specified by the docst
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING
 
@@ -1169,78 +1170,267 @@ class BluemiraNeutronicsCSG:
         ])
 
 
-class BlanketCell(openmc.Cell):
-    """
-    A generic blanket cell that forms the base class for the five specialised types of
-    blanket cells.
+class BluemiraCellType(Enum):
+    """Enumeration of BluemiraCell types."""
 
-    It's a special case of openmc.Cell, in that it has 3 to 4 surfaces
-    (mandatory surfaces: exterior_surface, ccw_surface, cw_surface;
-    optional surface: interior_surface), and it is more wieldy because we don't have to
-    specify the relevant half-space for each surface; instead the corners of the cell
-    is provided by the user, such that the appropriate regions are chosen.
+    # Single-null geometry with integrated FW & blanket, plus divertor and vessel
+    BLANKET = auto()
+    DIVERTOR = auto()
+    GENERIC = auto()
+
+    @classmethod
+    def _missing_(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(
+                f"{cls.__name__} has no type {value}"
+                f"please select from {(*cls._member_names_,)}"
+            ) from None
+
+
+class BluemiraCell(openmc.Cell):
+    """
+    A generic bluemira cell that forms the base class for all type of
+    cells for neutronics
     """
 
     def __init__(
         self,
-        exterior_surface: openmc.Surface,
-        ccw_surface: openmc.Surface,
         cw_surface: openmc.Surface,
-        interior_surface: openmc.Surface | None,
-        vertices: Coordinates,
-        csg: BluemiraNeutronicsCSG,
+        ccw_surface: openmc.Surface,
+        exterior_surfaces: list[openmc.Surface] | openmc.Surface,
+        interior_surfaces: list[openmc.Surface] | openmc.Surface,
+        exterior_wire: WireInfoList | None = None,
+        interior_wire: WireInfoList | None = None,
+        vertices: Coordinates | None = None,
+        csg: BluemiraNeutronicsCSG | None = None,
+        subtractive_region: openmc.Region | None = None,
         cell_id: int | None = None,
         name: str = "",
         fill: openmc.Material | None = None,
+        cell_type: BluemiraCellType = BluemiraCellType.BLANKET,
     ):
-        """
-        Create the openmc.Cell from 3 to 4 surfaces and an example point.
+        self.cell_type = cell_type
+        self.cw_surface = cw_surface
+        self.ccw_surface = ccw_surface
+        self.exterior_surfaces = (
+            [exterior_surfaces]
+            if isinstance(exterior_surfaces, openmc.Surface)
+            else exterior_surfaces
+        )
+        self.interior_surfaces = (
+            [interior_surfaces]
+            if isinstance(interior_surfaces, openmc.Surface)
+            else interior_surfaces
+        )
+        self.exterior_wire = exterior_wire
+        self.interior_wire = interior_wire
+        self.vertices = vertices
+        self.csg = csg or BluemiraNeutronicsCSG()
 
-        Parameters
-        ----------
-        exterior_surface
-            Surface on the exterior side of the cell
-        ccw_surface
-            Surface on the ccw wall side of the cell
-        cw_surface
-            Surface on the cw wall side of the cell
-        vertices
-            A list of points. Could be 2D or 3D.
-        interior_surface
-            Surface on the interior side of the cell
-        cell_id
-            see :class:`openmc.Cell`
-        name
-            see :class:`openmc.Cell`
-        fill
-            see :class:`openmc.Cell`
+        surfaces = [self.cw_surface, self.ccw_surface, *self.exterior_surfaces]
+        if self.interior_surfaces:
+            surfaces += self.interior_surfaces
+
+        # --- Branch logic based on cell type ---
+        if self.cell_type == BluemiraCellType.BLANKET:
+            if self.vertices is None:
+                raise ValueError("BluemiraCell requires vertices")
+            region = self.csg.region_from_surface_series(
+                surfaces, self.vertices.T, control_id=bool(cell_id)
+            )
+
+        elif self.cell_type == BluemiraCellType.DIVERTOR:
+            if not (self.exterior_wire and self.interior_wire):
+                raise ValueError("BluemiraCell requires exterior and interior wires")
+            region = self.csg.region_from_surface_series(
+                [
+                    self.cw_surface,
+                    self.ccw_surface,
+                    *self.exterior_surfaces,
+                    *self.interior_surfaces,
+                ],
+                self.get_all_vertices(),
+                control_id=bool(cell_id),
+            )
+
+            if subtractive_region:
+                region &= ~subtractive_region
+
+        elif self.vertices is not None:
+            region = self.csg.region_from_surface_series(
+                surfaces, self.vertices.T, control_id=bool(cell_id)
+            )
+
+        elif self.exterior_wire or self.interior_wire:
+            region = self.csg.region_from_surface_series(
+                surfaces, self.get_all_vertices(), control_id=bool(cell_id)
+            )
+
+        else:
+            raise ValueError("Must provide vertices or wires for cell region")
+
+        super().__init__(cell_id=cell_id, name=name, fill=fill, region=region)
+        self.volume = self.get_volume()
+        if self.volume <= 0:
+            raise GeometryError("Calculated volume is non-positive!")
+
+    @property
+    def outline(self):
+        """
+        Make the outline into a BluemiraWire. This method is created solely for the
+        purpose of calculating the volume of divertor type cell
+
+        This is slow but it is accurate and works well.
+
+        Raises
+        ------
+        TypeError
+            if used for BluemiraCellType other than Divertor
+        ValueError
+            if interior and exterior wires are missing
+        """
+        if self.cell_type != BluemiraCellType.DIVERTOR:
+            raise TypeError("BluemiraCell.outline() can be only used for Divertor Cells")
+        if not self.interior_wire or not self.exterior_wire:
+            raise ValueError(
+                "Interior and Exterior Wires for divertor cells are missing."
+            )
+
+        if not hasattr(self, "_outline"):
+            wire_list = [
+                self.interior_wire.restore_to_wire(),
+                self.exterior_wire.restore_to_wire(),
+            ]
+            # make the connecting wires so that BluemiraWire doesn't moan about
+            # having a discontinuous wires.
+            i = self.interior_wire.get_3D_coordinates()
+            e = self.exterior_wire.get_3D_coordinates()
+            if not np.array_equal(e[-1], i[0]):
+                wire_list.insert(0, make_polygon([e[-1], i[0]]))
+            if not np.array_equal(i[-1], e[0]):
+                wire_list.insert(-1, make_polygon([i[-1], e[0]]))
+            self._outline = BluemiraWire(wire_list)
+        return self._outline
+
+    def get_volume(self):
+        """
+        Get the volume
 
         Raises
         ------
         GeometryError
-            Ordering of wires results in negative volume
+            Volume is negative
+        ValueError
+            if interior and exterior wires are missing
         """
-        self.exterior_surface = exterior_surface
-        self.ccw_surface = ccw_surface
-        self.cw_surface = cw_surface
-        self.interior_surface = interior_surface
-        self.vertex = vertices
-        self.csg = csg
+        if self.cell_type == BluemiraCellType.DIVERTOR:
+            if not (self.exterior_wire and self.interior_wire):
+                raise ValueError("BluemiraCell requires exterior and interior wires")
+            half_solid = BluemiraSolid(revolve_shape(self.outline))
+            cm3_volume = to_cm3(half_solid.volume * 2)
+            if cm3_volume <= 0:
+                raise GeometryError("Volume (as calculated by FreeCAD) is negative!")
+            return cm3_volume
 
-        super().__init__(
-            cell_id=cell_id,
-            name=name,
-            fill=fill,
-            region=self.csg.region_from_surface_series(
-                [exterior_surface, ccw_surface, cw_surface, interior_surface],
-                self.vertex.T,  # We just assume it is convex
-                control_id=bool(cell_id),
-            ),
+        # Blanket/ generic
+        if self.vertices is None:
+            raise ValueError("BluemiraCell requires vertices")
+
+        return to_cm3(polygon_revolve_signed_volume(self.vertices[::2]))
+
+    def get_all_vertices(self) -> npt.NDArray:
+        """
+        Get all of the vertices of this cell, which should help us find its convex hull.
+
+        Raises
+        ------
+        TypeError
+            if used for BluemiraCellType other than Divertor
+        ValueError
+            if interior and exterior wires are missing
+        """
+        if self.cell_type != BluemiraCellType.DIVERTOR:
+            raise TypeError(
+                "BluemiraCell.get_all_vertices() can be only used for Divertor Cells"
+            )
+        if not self.interior_wire or not self.exterior_wire:
+            raise ValueError(
+                "Interior and Exterior Wires for divertor cells are missing."
+            )
+
+        return np.concatenate([
+            self.exterior_wire.get_3D_coordinates(),
+            self.interior_wire.get_3D_coordinates(),
+        ])
+
+    def exclusion_zone(
+        self,
+        *,
+        away_from_plasma: bool = True,
+        control_id: bool = False,
+        additional_test_points: npt.NDArray | None = None,
+    ) -> openmc.Region:
+        """
+        Get the exclusion zone of a semi-CONVEX cell.
+
+        This can only be validly used:
+
+            If away_from_plasma=True, then the interior side of the cell must be convex.
+            If away_from_plasma=False, then the exterior_side of the cell must be convex.
+
+        Usage:
+
+            next_cell_region = flat_intersection(..., ~this_cell.exclusion_zone())
+
+        Parameters
+        ----------
+        control_id
+            Passed as argument onto
+            :func:`~bluemira.radiation_transport.neutronics.make_csg.region_from_surface_series`
+
+        Raises
+        ------
+        GeometryError
+            Interior and exterior wire vertices must be convex
+
+        TypeError
+            if used for BluemiraCellType other than Divertor
+
+        """
+        if not self.cell_type == BluemiraCellType.DIVERTOR:
+            raise TypeError(
+                "BluemiraCell.exclusion_zone() can be only used for Divertor Cells"
+            )
+        if away_from_plasma:
+            vertices_array = self.interior_wire.get_3D_coordinates()
+            if additional_test_points is not None:
+                vertices_array = np.concatenate([additional_test_points, vertices_array])
+
+            if not is_convex(vertices_array):
+                raise GeometryError(
+                    f"{self} (excluding the surface)'s vertices needs to be convex!"
+                )
+            return self.csg.region_from_surface_series(
+                [self.cw_surface, self.ccw_surface, *self.interior_surfaces],
+                vertices_array,
+                control_id=control_id,
+            )
+        # exclusion zone facing towards the plasma
+        vertices_array = self.exterior_wire.get_3D_coordinates()
+        if additional_test_points is not None:
+            vertices_array = np.concatenate([additional_test_points, vertices_array])
+
+        if not is_convex(vertices_array):
+            raise GeometryError(
+                f"{self} (excluding the vacuum vessel)'s vertices needs to be convex!"
+            )
+        return self.csg.region_from_surface_series(
+            [self.cw_surface, self.ccw_surface, *self.exterior_surfaces],
+            vertices_array,
+            control_id=control_id,
         )
-
-        self.volume = to_cm3(polygon_revolve_signed_volume(vertices[::2]))
-        if self.volume <= 0:
-            raise GeometryError("Wrong ordering of vertices!")
 
 
 class BlanketCellStack:
@@ -1249,7 +1439,7 @@ class BlanketCellStack:
     closest to the exterior. They should all be situated at the same poloidal angle.
     """
 
-    def __init__(self, cell_stack: list[BlanketCell]):
+    def __init__(self, cell_stack: list[BluemiraCell]):
         """
         The shared surface between adjacent cells must be the SAME one, i.e. same id and
         hash, not just identical.
@@ -1282,11 +1472,11 @@ class BlanketCellStack:
         """Number of cells in stack"""
         return len(self.cell_stack)
 
-    def __getitem__(self, index_or_slice) -> list[BlanketCell] | BlanketCell:
+    def __getitem__(self, index_or_slice) -> list[BluemiraCell] | BluemiraCell:
         """Get cell from stack"""
         return self.cell_stack[index_or_slice]
 
-    def __iter__(self) -> Iterator[BlanketCell]:
+    def __iter__(self) -> Iterator[BluemiraCell]:
         """Iterator for BlanketCellStack"""
         return iter(self.cell_stack)
 
@@ -1544,16 +1734,17 @@ class BlanketCellStack:
                 surface_id=surface_ids[j],  # up to M+1
             )
             cell_stack.append(
-                BlanketCell(
-                    exterior_surface=ext_surf,
+                BluemiraCell(
+                    exterior_surfaces=ext_surf,
                     ccw_surface=ccw_surface,
                     cw_surface=cw_surface,
-                    interior_surface=int_surf,
+                    interior_surfaces=int_surf,
                     vertices=vertices[k],  # up to M
                     csg=csg,
                     cell_id=cell_ids[k],  # up to M
                     name=f"{cell_type.name} of blanket cell stack {i}",
                     fill=fill_lib.match_material(cell_type, inboard=inboard),
+                    cell_type=BluemiraCellType.BLANKET,
                 )
             )
             int_surf = ext_surf
@@ -1770,159 +1961,6 @@ class BlanketCellArray:
         return cls(cell_array, csg)
 
 
-class DivertorCell(openmc.Cell):
-    """
-    A generic Divertor cell forming either the (inner target's/outer target's/
-    dome's) (surface/ bulk).
-    """
-
-    def __init__(
-        self,
-        exterior_surfaces: list[tuple[openmc.Surface]],
-        cw_surface: openmc.Surface,
-        ccw_surface: openmc.Surface,
-        interior_surfaces: list[tuple[openmc.Surface]],
-        exterior_wire: WireInfoList,
-        interior_wire: WireInfoList,
-        csg: BluemiraNeutronicsCSG,
-        subtractive_region: openmc.Region | None = None,
-        cell_id: int | None = None,
-        name: str = "",
-        fill: openmc.Material | None = None,
-    ):
-        """Create a cell from exterior_surface"""
-        self.exterior_surfaces = exterior_surfaces
-        self.cw_surface = cw_surface
-        self.ccw_surface = ccw_surface
-        self.interior_surfaces = interior_surfaces
-        self.exterior_wire = exterior_wire
-        self.interior_wire = interior_wire
-        self.csg = csg
-
-        region = self.csg.region_from_surface_series(
-            [
-                self.cw_surface,
-                self.ccw_surface,
-                *self.exterior_surfaces,
-                *self.interior_surfaces,
-            ],
-            self.get_all_vertices(),
-            control_id=bool(cell_id),
-        )
-
-        if subtractive_region:
-            region &= ~subtractive_region
-        super().__init__(cell_id=cell_id, name=name, fill=fill, region=region)
-        self.volume = self.get_volume()
-
-    @property
-    def outline(self):
-        """
-        Make the outline into a BluemiraWire. This method is created solely for the
-        purpose of calculating the volume.
-
-        This is slow but it is accurate and works well.
-        """
-        if not hasattr(self, "_outline"):
-            wire_list = [
-                self.interior_wire.restore_to_wire(),
-                self.exterior_wire.restore_to_wire(),
-            ]
-            # make the connecting wires so that BluemiraWire doesn't moan about
-            # having a discontinuous wires.
-            i = self.interior_wire.get_3D_coordinates()
-            e = self.exterior_wire.get_3D_coordinates()
-            if not np.array_equal(e[-1], i[0]):
-                wire_list.insert(0, make_polygon([e[-1], i[0]]))
-            if not np.array_equal(i[-1], e[0]):
-                wire_list.insert(-1, make_polygon([i[-1], e[0]]))
-            self._outline = BluemiraWire(wire_list)
-        return self._outline
-
-    def get_volume(self):
-        """
-        Get the volume using the BluemiraWire of its own outline.
-
-        Raises
-        ------
-        GeometryError
-            Volume is negative
-        """
-        half_solid = BluemiraSolid(revolve_shape(self.outline))
-        cm3_volume = to_cm3(half_solid.volume * 2)
-        if cm3_volume <= 0:
-            raise GeometryError("Volume (as calculated by FreeCAD) is negative!")
-        return cm3_volume
-
-    def get_all_vertices(self) -> npt.NDArray:
-        """
-        Get all of the vertices of this cell, which should help us find its convex hull.
-        """
-        return np.concatenate([
-            self.exterior_wire.get_3D_coordinates(),
-            self.interior_wire.get_3D_coordinates(),
-        ])
-
-    def exclusion_zone(
-        self,
-        *,
-        away_from_plasma: bool = True,
-        control_id: bool = False,
-        additional_test_points: npt.NDArray | None = None,
-    ) -> openmc.Region:
-        """
-        Get the exclusion zone of a semi-CONVEX cell.
-
-        This can only be validly used:
-
-            If away_from_plasma=True, then the interior side of the cell must be convex.
-            If away_from_plasma=False, then the exterior_side of the cell must be convex.
-
-        Usage:
-
-            next_cell_region = flat_intersection(..., ~this_cell.exclusion_zone())
-
-        Parameters
-        ----------
-        control_id
-            Passed as argument onto
-            :func:`~bluemira.radiation_transport.neutronics.make_csg.region_from_surface_series`
-
-        Raises
-        ------
-        GeometryError
-            Interior and exterior wire vertices must be convex
-        """
-        if away_from_plasma:
-            vertices_array = self.interior_wire.get_3D_coordinates()
-            if additional_test_points is not None:
-                vertices_array = np.concatenate([additional_test_points, vertices_array])
-
-            if not is_convex(vertices_array):
-                raise GeometryError(
-                    f"{self} (excluding the surface)'s vertices needs to be convex!"
-                )
-            return self.csg.region_from_surface_series(
-                [self.cw_surface, self.ccw_surface, *self.interior_surfaces],
-                vertices_array,
-                control_id=control_id,
-            )
-        # exclusion zone facing towards the plasma
-        vertices_array = self.exterior_wire.get_3D_coordinates()
-        if additional_test_points is not None:
-            vertices_array = np.concatenate([additional_test_points, vertices_array])
-
-        if not is_convex(vertices_array):
-            raise GeometryError(
-                f"{self} (excluding the vacuum vessel)'s vertices needs to be convex!"
-            )
-        return self.csg.region_from_surface_series(
-            [self.cw_surface, self.ccw_surface, *self.exterior_surfaces],
-            vertices_array,
-            control_id=control_id,
-        )
-
-
 class DivertorCellStack:
     """
     A CONVEX object! i.e. all its exterior points together should make a convex hull.
@@ -1932,7 +1970,7 @@ class DivertorCellStack:
     """
 
     def __init__(
-        self, divertor_cell_stack: list[DivertorCell], csg: BluemiraNeutronicsCSG
+        self, divertor_cell_stack: list[BluemiraCell], csg: BluemiraNeutronicsCSG
     ):
         self.cell_stack = divertor_cell_stack
         self.csg = csg
@@ -1987,11 +2025,11 @@ class DivertorCellStack:
         """Length of DivertorCellStack"""
         return len(self.cell_stack)
 
-    def __getitem__(self, index_or_slice) -> list[DivertorCell] | DivertorCell:
+    def __getitem__(self, index_or_slice) -> list[BluemiraCell] | BluemiraCell:
         """Get item for DivertorCellStack"""
         return self.cell_stack[index_or_slice]
 
-    def __iter__(self) -> Iterator[DivertorCell]:
+    def __iter__(self) -> Iterator[BluemiraCell]:
         """Iterator for DivertorCellStack"""
         return iter(self.cell_stack)
 
@@ -2080,7 +2118,7 @@ class DivertorCellStack:
         cell_stack = [
             # The middle cell is the only cell guaranteed to be convex.
             # Therefore it is the first cell to be made.
-            DivertorCell(
+            BluemiraCell(
                 # surfaces: ext, cw, ccw, int.
                 outer_surf,
                 cw_surface,
@@ -2096,7 +2134,7 @@ class DivertorCellStack:
         ]
         # make the vacuum vessel cell
         cell_stack.append(
-            DivertorCell(
+            BluemiraCell(
                 # surfaces: ext, cw, ccw, int.
                 outermost_surf,
                 cw_surface,
@@ -2123,7 +2161,7 @@ class DivertorCellStack:
             # exterior of bulk becomes the interior of surface cell.
             cell_stack.insert(
                 0,
-                DivertorCell(
+                BluemiraCell(
                     # surfaces: ext, cw, ccw, int.
                     # Same ext surfaces as before.
                     # It'll be handled by subtractive_region later.
