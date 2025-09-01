@@ -2130,6 +2130,7 @@ class DivertorCellStack:
                 csg=csg,
                 name=f"Bulk of divertor in diver cell stack {stack_num}",
                 fill=materials.match_material(CellType.DivertorBulk),
+                cell_type=BluemiraCellType.DIVERTOR,
             ),
         ]
         # make the vacuum vessel cell
@@ -2153,6 +2154,7 @@ class DivertorCellStack:
                 name="Vacuum Vessel behind the divertor in divertor cell stack"
                 f"{stack_num}",
                 fill=materials.match_material(CellType.DivertorFirstWall),
+                cell_type=BluemiraCellType.DIVERTOR,
             )
         )
         # Unfortunately, this does mean that the vacuum vessel has a larger ID than the
@@ -2180,6 +2182,7 @@ class DivertorCellStack:
                         additional_test_points=outermost_wire.get_3D_coordinates(),
                     ),
                     fill=materials.match_material(CellType.DivertorSurface),
+                    cell_type=BluemiraCellType.DIVERTOR,
                 ),
             )
             # again, unfortunately, this does mean that the surface armour cell has the
