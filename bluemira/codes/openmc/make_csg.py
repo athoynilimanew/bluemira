@@ -22,6 +22,7 @@ import openmc.region
 
 from bluemira.codes.openmc.material import CellType
 from bluemira.geometry.constants import D_TOLERANCE
+from bluemira.geometry.coordinates import Coordinates
 from bluemira.geometry.error import GeometryError
 from bluemira.geometry.solid import BluemiraSolid
 from bluemira.geometry.tools import (
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from bluemira.codes.openmc.material import MaterialsLibrary
-    from bluemira.geometry.coordinates import Coordinates
     from bluemira.radiation_transport.neutronics.geometry import (
         DivertorThickness,
         TokamakDimensions,
@@ -75,8 +75,8 @@ SHRINK_DISTANCE = 0.0005  # [m] = 0.05cm = 0.5 mm
 class CellStage:
     """Stage of making cells."""
 
-    blanket: BlanketCellArray
-    divertor: DivertorCellArray
+    blanket: BluemiraCellArray
+    divertor: BluemiraCellArray
     tf_coils: list[openmc.Cell]
     cs_coil: openmc.Cell
     plasma: openmc.Cell
@@ -676,8 +676,8 @@ def plasma_void(csg, blanket, divertor, *, control_id: bool = False) -> openmc.R
 def make_void_cells(
     csg,
     universe: openmc.region.Intersection,
-    blanket: BlanketCellArray,
-    divertor: DivertorCellArray,
+    blanket: BluemiraCellArray,
+    divertor: BluemiraCellArray,
     central_solenoid: openmc.Cell,
     tf_coils: list[openmc.Cell] | None,
     rad_shield: openmc.Cell | None = None,
@@ -758,7 +758,7 @@ def make_cell_arrays(
         control_id=control_id,
     )
 
-    blanket = BlanketCellArray.from_pre_cell_array(
+    blanket = BluemiraCellArray.from_blanket_pre_cell_array(
         pre_cell_stage.blanket,
         materials,
         tokamak_dimensions,
@@ -771,7 +771,7 @@ def make_cell_arrays(
     if control_id:
         round_up_next_openmc_ids()
 
-    divertor = DivertorCellArray.from_pre_cell_array(
+    divertor = BluemiraCellArray.from_divertor_pre_cell_array(
         pre_cell_stage.divertor,
         materials,
         tokamak_dimensions.divertor,
@@ -1433,13 +1433,19 @@ class BluemiraCell(openmc.Cell):
         )
 
 
-class BlanketCellStack:
+class BluemiraCellStack:
     """
-    A stack of openmc.Cells, first cell is closest to the interior and last cell is
-    closest to the exterior. They should all be situated at the same poloidal angle.
+    A generic stack of openmc.Cells, first cell is closest to the
+    interior and last cell isv closest to the exterior. They should
+    all be situated at the same poloidal angle.
     """
 
-    def __init__(self, cell_stack: list[BluemiraCell]):
+    def __init__(
+        self,
+        cell_stack: list[BluemiraCell],
+        csg: BluemiraNeutronicsCSG,
+        stack_type: BluemiraCellType = BluemiraCellType.BLANKET,
+    ):
         """
         The shared surface between adjacent cells must be the SAME one, i.e. same id and
         hash, not just identical.
@@ -1450,7 +1456,7 @@ class BlanketCellStack:
         bounding box to confirm that the stack is linearly increasing/decreasing in xyz
         bounds.
 
-        Series of cells:
+        If Blanket type, Series of cells:
 
             SurfaceCell
             FirstWallCell
@@ -1464,9 +1470,15 @@ class BlanketCellStack:
             Contiguous stack of cells expected
         """
         self.cell_stack = cell_stack
-        for int_cell, ext_cell in pairwise(cell_stack):
-            if int_cell.exterior_surface is not ext_cell.interior_surface:
-                raise ValueError("Expected a contiguous stack of cells!")
+        self.stack_type = stack_type
+        self.csg = csg
+
+        if self.stack_type == BluemiraCellType.BLANKET:
+            for int_cell, ext_cell in pairwise(cell_stack):
+                if int_cell.exterior_surfaces[0] is not ext_cell.interior_surfaces[0]:
+                    raise ValueError("Expected a contiguous stack of cells!")
+        # The above check is not needed for divertors because of
+        # how we subtract region instead
 
     def __len__(self) -> int:
         """Number of cells in stack"""
@@ -1477,7 +1489,7 @@ class BlanketCellStack:
         return self.cell_stack[index_or_slice]
 
     def __iter__(self) -> Iterator[BluemiraCell]:
-        """Iterator for BlanketCellStack"""
+        """Iterator for BluemiraCellStack"""
         return iter(self.cell_stack)
 
     def __repr__(self) -> str:
@@ -1485,7 +1497,7 @@ class BlanketCellStack:
         return (
             super()
             .__repr__()
-            .replace(" at ", f" of {len(self.cell_stack)} BlanketCells at ")
+            .replace(" at ", f" of {len(self.cell_stack)} BluemiraCells at ")
         )
 
     @staticmethod
@@ -1515,13 +1527,88 @@ class BlanketCellStack:
 
     @property
     def interior_surface(self):
-        """Get interior surface"""
-        return self.cell_stack[0].interior_surface
+        """
+        Get interior surface - only applicable for blanket/generic type
+
+        Raises
+        ------
+        TypeError
+            if stack type is BluemiraCellType.DIVERTOR
+        """
+        if self.stack_type == BluemiraCellType.DIVERTOR:
+            raise TypeError("This property does not works for Divertor-type cells")
+        return self.cell_stack[0].interior_surfaces[0]
 
     @property
     def exterior_surface(self):
-        """Get exterior surface"""
-        return self.cell_stack[-1].exterior_surface
+        """
+        Get exterior surface - only applicable for blanket/generic type
+
+        Raises
+        ------
+        TypeError
+            if stack type is BluemiraCellType.DIVERTOR
+        """
+        if self.stack_type == BluemiraCellType.DIVERTOR:
+            raise TypeError("This property does not works for Divertor-type cells")
+        return self.cell_stack[-1].exterior_surfaces[0]
+
+    @property
+    def interior_surfaces(self):
+        """
+        Get interior surfaces - only applicable for divertor type cells
+
+        Raises
+        ------
+        TypeError
+            if stack type is not BluemiraCellType.DIVERTOR
+        """
+        if self.stack_type != BluemiraCellType.DIVERTOR:
+            raise TypeError("This property only works for Divertor-type cells")
+        return self.cell_stack[0].interior_surfaces
+
+    @property
+    def exterior_surfaces(self):
+        """
+        Get exterior surfaces - only applicable for divertor type cells
+
+        Raises
+        ------
+        TypeError
+            if stack type is not BluemiraCellType.DIVERTOR
+        """
+        if self.stack_type != BluemiraCellType.DIVERTOR:
+            raise TypeError("This property only works for Divertor-type cells")
+        return self.cell_stack[-1].exterior_surfaces
+
+    @property
+    def exterior_wire(self):
+        """
+        Alias to find the outermost cell's exterior_wire - only for divertor type cells
+
+        Raises
+        ------
+        TypeError
+            if stack type is not BluemiraCellType.DIVERTOR
+        """
+        if self.stack_type != BluemiraCellType.DIVERTOR:
+            raise TypeError("This property only works for Divertor-type cells")
+        return self.cell_stack[-1].exterior_wire
+
+    @property
+    def interior_wire(self):
+        """
+        Alias to find the innermost cell's interior_wire - only for divertor type cells
+
+        Raises
+        ------
+        TypeError
+            if stack type is not BluemiraCellType.DIVERTOR
+        """
+        if self.stack_type != BluemiraCellType.DIVERTOR:
+            raise TypeError("This property only works for Divertor-type cells")
+
+        return self.cell_stack[0].interior_wire
 
     @property
     def ccw_surface(self):
@@ -1541,13 +1628,44 @@ class BlanketCellStack:
         outermost).
         """
         if not hasattr(self, "_interfaces"):
-            self._interfaces = [cell.interior_surface for cell in self.cell_stack]
-            self._interfaces.append(self.cell_stack[-1].exterior_surface)
+            if self.stack_type == BluemiraCellType.DIVERTOR:
+                self._interfaces = [cell.interior_surfaces for cell in self.cell_stack]
+                self._interfaces.append(self.cell_stack[-1].exterior_surfaces)
+            else:
+                self._interfaces = [
+                    cell.interior_surfaces[0] for cell in self.cell_stack
+                ]
+                self._interfaces.append(self.cell_stack[-1].exterior_surfaces[0])
         return self._interfaces
 
-    def get_overall_region(
-        self, csg: BluemiraNeutronicsCSG, *, control_id: bool = False
-    ) -> openmc.Region:
+    def get_all_vertices(self) -> npt.NDArray:
+        """
+        Returns
+        -------
+        vertices_array
+            shape = (N+M, 3)
+
+
+        Raises
+        ------
+        TypeError
+            if stack type is not BluemiraCellType.DIVERTOR
+        ValueError
+            if interior and exterior wires are missing
+        """
+        if self.stack_type != BluemiraCellType.DIVERTOR:
+            raise TypeError("get_all_vertices() can only be used for Divertor Cells")
+        if not self.interior_wire or not self.exterior_wire:
+            raise ValueError(
+                "Interior and Exterior Wires for divertor cells are missing."
+            )
+
+        return np.concatenate([
+            self.interior_wire.get_3D_coordinates(),
+            self.exterior_wire.get_3D_coordinates(),
+        ])
+
+    def get_overall_region(self, *, control_id: bool = False) -> openmc.Region:
         """
         Calculate the region covering the entire cell stack.
 
@@ -1562,13 +1680,30 @@ class BlanketCellStack:
         GeometryError
             Vertices must be convex
         """
-        vertices = np.vstack((
-            self.cell_stack[0].vertex.T[(1, 2),],
-            self.cell_stack[-1].vertex.T[(3, 0),],
-        ))
+        if self.stack_type == BluemiraCellType.DIVERTOR:
+            vertices = self.get_all_vertices()
+        else:
+            vertices = np.vstack((
+                self.cell_stack[0].vertices.T[(1, 2),],
+                self.cell_stack[-1].vertices.T[(3, 0),],
+            ))
         if not is_convex(vertices):
             raise GeometryError(f"{self}'s vertices need to be convex!")
-        return csg.region_from_surface_series(
+
+        if self.stack_type == BluemiraCellType.DIVERTOR:
+            return self.csg.region_from_surface_series(
+                [
+                    self.cw_surface,
+                    self.ccw_surface,
+                    *self.interior_surfaces,
+                    *self.exterior_surfaces,
+                ],
+                vertices,
+                control_id=control_id,
+            )
+
+        # for blanket/generic cells
+        return self.csg.region_from_surface_series(
             [
                 self.exterior_surface,
                 self.ccw_surface,
@@ -1580,7 +1715,7 @@ class BlanketCellStack:
         )
 
     @classmethod
-    def from_pre_cell(
+    def from_blanket_pre_cell(
         cls,
         pre_cell: PreCell,
         ccw_surface: openmc.Surface,
@@ -1594,6 +1729,8 @@ class BlanketCellStack:
     ):
         """
         Create a CellStack using a precell and TWO surfaces that sandwiches that precell.
+
+        ONLY for blanket/generic cell type
 
         Parameters
         ----------
@@ -1739,7 +1876,7 @@ class BlanketCellStack:
                     ccw_surface=ccw_surface,
                     cw_surface=cw_surface,
                     interior_surfaces=int_surf,
-                    vertices=vertices[k],  # up to M
+                    vertices=Coordinates(vertices[k]),  # up to M
                     csg=csg,
                     cell_id=cell_ids[k],  # up to M
                     name=f"{cell_type.name} of blanket cell stack {i}",
@@ -1750,334 +1887,7 @@ class BlanketCellStack:
             int_surf = ext_surf
         int_surf.name = "vacuum-vessel-facing surface"
 
-        return cls(cell_stack)
-
-
-class BlanketCellArray:
-    """
-    An array of BlanketCellStack. Interior and exterior curve are both assumed convex.
-
-    Parameters
-    ----------
-    blanket_cell_array
-        a list of BlanketCellStack
-
-    """
-
-    def __init__(
-        self, blanket_cell_array: list[BlanketCellStack], csg: BluemiraNeutronicsCSG
-    ):
-        """
-        Create array from a list of BlanketCellStack
-
-        Raises
-        ------
-        GeometryError
-            Neighbouring cell stack not aligned
-        """
-        self.blanket_cell_array = blanket_cell_array
-        self.poloidal_surfaces = [self.blanket_cell_array[0].ccw_surface]
-        self.radial_surfaces = []
-        self.csg = csg
-        for i, this_stack in enumerate(self.blanket_cell_array):
-            self.poloidal_surfaces.append(this_stack.cw_surface)
-            self.radial_surfaces.append(this_stack.interfaces)
-
-            # check neighbouring cells share the same lateral surface
-            if i != len(self.blanket_cell_array) - 1:
-                next_stack = self.blanket_cell_array[i + 1]
-                if this_stack.cw_surface is not next_stack.ccw_surface:
-                    raise GeometryError(
-                        f"Neighbouring BlanketCellStack [{i}] and "
-                        f"[{i + 1}] are not aligned!"
-                    )
-
-    def __len__(self) -> int:
-        """Number of cell stacks"""
-        return len(self.blanket_cell_array)
-
-    def __getitem__(self, index_or_slice) -> list[BlanketCellStack] | BlanketCellStack:
-        """Get cell stack"""
-        return self.blanket_cell_array[index_or_slice]
-
-    def __iter__(self) -> Iterator[BlanketCellStack]:
-        """Iterator for BlanketCellArray"""
-        return iter(self.blanket_cell_array)
-
-    def __repr__(self) -> str:
-        """String representation"""
-        return (
-            super()
-            .__repr__()
-            .replace(" at ", f" of {len(self.blanket_cell_array)} BlanketCellStacks at ")
-        )
-
-    def exterior_vertices(self) -> npt.NDArray:
-        """
-        Returns all of the tokamak's poloidal cross-section's outside corners'
-        coordinates, in 3D.
-
-        Returns
-        -------
-        exterior_vertices:
-            array of shape (N+1, 3) arranged clockwise (inboard to outboard).
-        """
-        return np.asarray([
-            self.blanket_cell_array[0][-1].vertex.T[Vert.exterior_start],
-            *(
-                stack[-1].vertex.T[Vert.exterior_end]
-                for stack in self.blanket_cell_array
-            ),
-        ])
-
-    def interior_vertices(self) -> npt.NDArray:
-        """
-        Returns all of the tokamak's poloidal cross-section's inside corners'
-        coordinates, in 3D.
-
-        Parameters
-        ----------
-        interior_vertices:
-            array of shape (N+1, 3) arranged clockwise (inboard to outboard).
-        """
-        return np.asarray([
-            self.blanket_cell_array[0][0].vertex.T[Vert.interior_start],
-            *(stack[0].vertex.T[Vert.interior_end] for stack in self.blanket_cell_array),
-        ])
-
-    def interior_surfaces(self) -> list[openmc.Surface]:
-        """
-        Get all of the innermost (plasm-facing) surface.
-        Runs clockwise.
-        """
-        return [surf_stack[0] for surf_stack in self.radial_surfaces]
-
-    def exterior_surfaces(self) -> list[openmc.Surface]:
-        """
-        Get all of the outermost (vacuum-vessel-facing) surface.
-        Runs clockwise.
-        """
-        return [surf_stack[-1] for surf_stack in self.radial_surfaces]
-
-    def exclusion_zone(self, *, control_id: bool = False) -> openmc.Region:
-        """
-        Get the exclusion zone AWAY from the plasma.
-        Usage: plasma_region = openmc.Union(..., ~self.exclusion_zone(), ...)
-        Assumes that all of the panels (interior surfaces) together forms a convex hull.
-
-        Parameters
-        ----------
-        control_id
-            Passed as argument onto
-            :meth:`~bluemira.radiation_transport.neutronics.make_csg.BluemiraNeutronicsCSG.region_from_surface_series`.
-
-        Raises
-        ------
-        GeometryError
-            Vertices must be convex
-        """
-        exclusion_zone_by_stack = []
-        for stack in self.blanket_cell_array:
-            stack_vertices = np.vstack((
-                stack[0].vertex.T[(1, 2),],
-                stack[-1].vertex.T[(3, 0),],
-            ))
-            if not is_convex(stack_vertices):
-                raise GeometryError(f"{self}'s vertices need to be convex!")
-
-            exclusion_zone_by_stack.append(
-                self.csg.region_from_surface_series(
-                    [stack.cw_surface, stack.ccw_surface, stack.interior_surface],
-                    stack_vertices,
-                    control_id=control_id,
-                )
-            )
-        return openmc.Union(exclusion_zone_by_stack)
-
-    @classmethod
-    def from_pre_cell_array(
-        cls,
-        pre_cell_array: PreCellArray,
-        materials: MaterialsLibrary,
-        blanket_dimensions: TokamakDimensions,
-        csg: BluemiraNeutronicsCSG,
-        *,
-        control_id: bool = False,
-    ) -> BlanketCellArray:
-        """
-        Create a BlanketCellArray from a
-        :class:`~bluemira.radiation_transport.neutronics.make_pre_cell.PreCellArray`.
-        This method assumes itself is the first method to be run to create cells in the
-        :class:`~openmc.Universe.`
-
-        Parameters
-        ----------
-        pre_cell_array
-            PreCellArray
-        materials
-            :class:`~MaterialsLibrary` so that it separates into .inboard, .outboard,
-            .divertor, .tf_coil_windings, etc.
-        blanket_dimensions
-            :class:`bluemira.radiation_transport.neutronics.params.TokamakDimensions`
-            recording the dimensions of the blanket in SI units (unit: [m]).
-        control_id
-            Passed as argument onto
-            :meth:`~bluemira.radiation_transport.neutronics.make_csg.BluemiraNeutronicsCSG.region_from_surface_series`.
-        """
-        cell_walls = pre_cell_array.cell_walls
-        # TODO @je-cook: when contorl_id, we're forced to start at id=0
-        # 3531
-
-        # left wall
-        ccw_surf = csg.surface_from_2points(
-            *cell_walls[0],
-            surface_id=1 if control_id else None,
-            name="Blanket cell wall 0",
-        )
-        cell_array = []
-        for i, (pre_cell, cw_wall) in enumerate(
-            zip(pre_cell_array.pre_cells, cell_walls[1:], strict=True)
-        ):
-            # right wall
-            cw_surf = csg.surface_from_2points(
-                *cw_wall,
-                surface_id=1 + 10 * (i + 1) if control_id else None,
-                name=f"Blanket cell wall of blanket cell stack {i + 1}",
-            )
-
-            stack = BlanketCellStack.from_pre_cell(
-                pre_cell,
-                ccw_surf,
-                cw_surf,
-                get_depth_values(pre_cell, blanket_dimensions),
-                csg=csg,
-                fill_lib=materials,
-                inboard=check_inboard_outboard(pre_cell, blanket_dimensions),
-                blanket_stack_num=i if control_id else None,
-            )
-            cell_array.append(stack)
-            ccw_surf = cw_surf
-
-        return cls(cell_array, csg)
-
-
-class DivertorCellStack:
-    """
-    A CONVEX object! i.e. all its exterior points together should make a convex hull.
-    A stack of DivertorCells (openmc.Cells), first cell is closest to the interior and
-    last cell is closest to the exterior. They should all be situated on the same
-    poloidal angle.
-    """
-
-    def __init__(
-        self, divertor_cell_stack: list[BluemiraCell], csg: BluemiraNeutronicsCSG
-    ):
-        self.cell_stack = divertor_cell_stack
-        self.csg = csg
-        # This check below is invalid because of how we subtract region instead.
-        # for int_cell, ext_cell in pairwise(self.cell_stack):
-        #     if int_cell.exterior_surfaces is not ext_cell.interior_surfaces:
-        #         raise ValueError("Expected a contiguous stack of cells!")
-
-    @property
-    def interior_surfaces(self):
-        """Get interior surfaces"""
-        return self.cell_stack[0].interior_surfaces
-
-    @property
-    def exterior_surfaces(self):
-        """Get exterior surfaces"""
-        return self.cell_stack[-1].exterior_surfaces
-
-    @property
-    def ccw_surface(self):
-        """Get counter clockwise surface"""
-        return self.cell_stack[-1].ccw_surface
-
-    @property
-    def cw_surface(self):
-        """Get clockwise surface"""
-        return self.cell_stack[-1].cw_surface
-
-    @property
-    def exterior_wire(self):
-        """Alias to find the outermost cell's exterior_wire"""
-        return self.cell_stack[-1].exterior_wire
-
-    @property
-    def interior_wire(self):
-        """Alias to find the innermost cell's interior_wire"""
-        return self.cell_stack[0].interior_wire
-
-    @property
-    def interfaces(self):
-        """
-        All of the radial surfaces, including the innermost (exposed to plasma) and
-        outermost (facing the vacuum vessel); arranged in that order (from innermost to
-        outermost).
-        """
-        if not hasattr(self, "_interfaces"):
-            self._interfaces = [cell.interior_surfaces for cell in self.cell_stack]
-            self._interfaces.append(self.cell_stack[-1].exterior_surfaces)
-        return self._interfaces  # list of list of (1- or 2-tuple of) surfaces.
-
-    def __len__(self) -> int:
-        """Length of DivertorCellStack"""
-        return len(self.cell_stack)
-
-    def __getitem__(self, index_or_slice) -> list[BluemiraCell] | BluemiraCell:
-        """Get item for DivertorCellStack"""
-        return self.cell_stack[index_or_slice]
-
-    def __iter__(self) -> Iterator[BluemiraCell]:
-        """Iterator for DivertorCellStack"""
-        return iter(self.cell_stack)
-
-    def __repr__(self) -> str:
-        """String representation"""
-        return super().__repr__().replace(" at ", f" of {len(self)} DivertorCells at ")
-
-    def get_all_vertices(self) -> npt.NDArray:
-        """
-        Returns
-        -------
-        vertices_array
-            shape = (N+M, 3)
-        """
-        return np.concatenate([
-            self.interior_wire.get_3D_coordinates(),
-            self.exterior_wire.get_3D_coordinates(),
-        ])
-
-    def get_overall_region(self, *, control_id: bool = False) -> openmc.Region:
-        """
-        Get the region that this cell-stack encompasses.
-
-        Parameters
-        ----------
-        control_id
-            Passed as argument onto
-            :func:`~bluemira.radiation_transport.neutronics.make_csg.region_from_surface_series`
-
-        Raises
-        ------
-        GeometryError
-            All vertices myst be convex
-        """
-        all_vertices = self.get_all_vertices()
-        if not is_convex(all_vertices):
-            raise GeometryError(f"overall_region of {self} needs to be convex!")
-
-        return self.csg.region_from_surface_series(
-            [
-                self.cw_surface,
-                self.ccw_surface,
-                *self.interior_surfaces,
-                *self.exterior_surfaces,
-            ],
-            all_vertices,
-            control_id=control_id,
-        )
+        return cls(cell_stack, BluemiraNeutronicsCSG(), BluemiraCellType.BLANKET)
 
     @classmethod
     def from_divertor_pre_cell(
@@ -2089,7 +1899,7 @@ class DivertorCellStack:
         csg: BluemiraNeutronicsCSG,
         armour_thickness: float = 0,
         stack_num: str | int = "",
-    ) -> DivertorCellStack:
+    ) -> BluemiraCellStack:
         """
         Create a stack from a single pre-cell and two poloidal surfaces sandwiching it.
 
@@ -2187,73 +1997,86 @@ class DivertorCellStack:
             )
             # again, unfortunately, this does mean that the surface armour cell has the
             # largest ID.
-        return cls(cell_stack, csg)
+        return cls(cell_stack, csg, BluemiraCellType.DIVERTOR)
 
 
-class DivertorCellArray:
-    """Turn the divertor into a cell array"""
+class BluemiraCellArray:
+    """
+    An array of BluemiraCellStack. Interior and exterior curve are both assumed convex.
 
-    def __init__(self, cell_array: list[DivertorCellStack]):
-        """Create array from a list of DivertorCellStack.
+    Parameters
+    ----------
+    cell_array
+        a list of BluemiraCellStack
+
+    """
+
+    def __init__(
+        self,
+        cell_array: list[BluemiraCellStack],
+        csg: BluemiraNeutronicsCSG,
+        array_type: BluemiraCellType = BluemiraCellType.BLANKET,
+    ):
+        """
+        Create array from a list of BluemiraCellStack
 
         Raises
         ------
         GeometryError
-            Neighbouring cell stack dont share the same poloidal wall
+            Neighbouring cell stack not aligned (BLANKET)
+            or
+            neighbouring cell stack dont share the same poloidal wall (divertor)
         """
         self.cell_array = cell_array
-        self.poloidal_surfaces = [self.cell_array[0].cw_surface]
+        self.array_type = array_type
+
+        if self.array_type == BluemiraCellType.DIVERTOR:
+            self.poloidal_surfaces = [self.cell_array[0].cw_surface]
+        else:
+            self.poloidal_surfaces = [self.cell_array[0].ccw_surface]
+
         self.radial_surfaces = []
-        # check neighbouring cells have the same cell stack.
+        self.csg = csg
         for i, this_stack in enumerate(self.cell_array):
-            self.poloidal_surfaces.append(this_stack.ccw_surface)
+            if self.array_type == BluemiraCellType.DIVERTOR:
+                self.poloidal_surfaces.append(this_stack.ccw_surface)
+            else:
+                self.poloidal_surfaces.append(this_stack.cw_surface)
             self.radial_surfaces.append(this_stack.interfaces)
 
             # check neighbouring cells share the same lateral surface
             if i != len(self.cell_array) - 1:
                 next_stack = self.cell_array[i + 1]
-                if this_stack.ccw_surface is not next_stack.cw_surface:
+                if self.array_type == BluemiraCellType.DIVERTOR:
+                    if this_stack.ccw_surface is not next_stack.cw_surface:
+                        raise GeometryError(
+                            f"Neighbouring Cell Stack {i} and {i + 1} are expected to"
+                            " share the same poloidal wall."
+                        )
+                elif this_stack.cw_surface is not next_stack.ccw_surface:
                     raise GeometryError(
-                        f"Neighbouring DivertorCellStack {i} and {i + 1} are expected to"
-                        " share the same poloidal wall."
+                        f"Neighbouring BluemiraCellStack [{i}] and "
+                        f"[{i + 1}] are not aligned!"
                     )
 
     def __len__(self) -> int:
-        """Length of DivertorCellArray"""
+        """Number of cell stacks"""
         return len(self.cell_array)
 
-    def __getitem__(self, index_or_slice) -> list[DivertorCellStack] | DivertorCellStack:
-        """Get item for DivertorCellArray"""
+    def __getitem__(self, index_or_slice) -> list[BluemiraCellStack] | BluemiraCellStack:
+        """Get cell stack"""
         return self.cell_array[index_or_slice]
 
-    def __iter__(self) -> Iterator[DivertorCellStack]:
-        """Iterator for DivertorCellArray"""
+    def __iter__(self) -> Iterator[BluemiraCellStack]:
+        """Iterator for BluemiraCellArray"""
         return iter(self.cell_array)
 
     def __repr__(self) -> str:
         """String representation"""
         return (
-            super().__repr__().replace(" at ", f" of {len(self)} DivertorCellStacks at")
-        )
-
-    def interior_surfaces(self) -> list[openmc.Surface]:
-        """
-        Get all of the innermost (plasm-facing) surface.
-        Runs clockwise.
-        """
-        return list(
-            chain.from_iterable([surf_stack[0] for surf_stack in self.radial_surfaces])
-        )
-
-    def exterior_surfaces(self) -> list[openmc.Surface]:
-        """
-        Get all of the outermost (vacuum-vessel-facing) surface.
-        Runs clockwise.
-        """
-        return list(
-            chain.from_iterable([
-                surf_stack[-1][::-1] for surf_stack in self.radial_surfaces
-            ])
+            super()
+            .__repr__()
+            .replace(" at ", f" of {len(self.cell_array)} BluemiraCellStacks at ")
         )
 
     def exterior_vertices(self) -> npt.NDArray:
@@ -2263,11 +2086,20 @@ class DivertorCellArray:
 
         Returns
         -------
-        exterior_vertices: npt.NDArray of shape (N+1, 3)
-            Arranged counter-clockwise (inboard to outboard).
+        exterior_vertices:
+            for blanket/generic cells:
+                array of shape (N+1, 3) arranged clockwise (inboard to outboard).
+            for divertor cells:
+                Arranged counter-clockwise (inboard to outboard).
         """
-        return np.concatenate([
-            stack.exterior_wire.get_3D_coordinates()[::-1] for stack in self.cell_array
+        if self.array_type == BluemiraCellType.DIVERTOR:
+            return np.concatenate([
+                stack.exterior_wire.get_3D_coordinates()[::-1]
+                for stack in self.cell_array
+            ])
+        return np.asarray([
+            self.cell_array[0][-1].vertices.T[Vert.exterior_start],
+            *(stack[-1].vertices.T[Vert.exterior_end] for stack in self.cell_array),
         ])
 
     def interior_vertices(self) -> npt.NDArray:
@@ -2277,17 +2109,56 @@ class DivertorCellArray:
 
         Parameters
         ----------
-        interior_vertices: npt.NDArray of shape (N+1, 3)
-            Arranged counter-clockwise (inboard to outboard).
+        interior_vertices:
+            for blanket/generic cells:
+                array of shape (N+1, 3) arranged clockwise (inboard to outboard).
+            for divertor cells:
+                Arranged counter-clockwise (inboard to outboard).
         """
-        return np.concatenate([
-            stack.interior_wire.get_3D_coordinates() for stack in self.cell_array
+        if self.array_type == BluemiraCellType.DIVERTOR:
+            return np.concatenate([
+                stack.interior_wire.get_3D_coordinates() for stack in self.cell_array
+            ])
+        return np.asarray([
+            self.cell_array[0][0].vertices.T[Vert.interior_start],
+            *(stack[0].vertices.T[Vert.interior_end] for stack in self.cell_array),
         ])
+
+    def interior_surfaces(self) -> list[openmc.Surface]:
+        """
+        Get all of the innermost (plasm-facing) surface.
+        Runs clockwise.
+        """
+        if self.array_type == BluemiraCellType.DIVERTOR:
+            return list(
+                chain.from_iterable([
+                    surf_stack[0] for surf_stack in self.radial_surfaces
+                ])
+            )
+        return [surf_stack[0] for surf_stack in self.radial_surfaces]
+
+    def exterior_surfaces(self) -> list[openmc.Surface]:
+        """
+        Get all of the outermost (vacuum-vessel-facing) surface.
+        Runs clockwise.
+        """
+        if self.array_type == BluemiraCellType.DIVERTOR:
+            return list(
+                chain.from_iterable([
+                    surf_stack[-1][::-1] for surf_stack in self.radial_surfaces
+                ])
+            )
+        return [surf_stack[-1] for surf_stack in self.radial_surfaces]
 
     def exclusion_zone(self, *, control_id: bool = False) -> openmc.Region:
         """
         Get the exclusion zone AWAY from the plasma.
         Usage: plasma_region = openmc.Union(..., ~self.exclusion_zone(), ...)
+
+        Blanket/generic cells:
+        Assumes that all of the panels (interior surfaces) together forms a convex hull.
+
+        Divertor cells:
         Assumes every single cell-stack is made of an interior surface which itself forms
         a convex hull.
 
@@ -2295,26 +2166,115 @@ class DivertorCellArray:
         ----------
         control_id
             Passed as argument onto
-            :func:`~bluemira.radiation_transport.neutronics.make_csg.region_from_surface_series`
+            :meth:`~bluemira.radiation_transport.neutronics.make_csg.BluemiraNeutronicsCSG.region_from_surface_series`.
+
+        Raises
+        ------
+        GeometryError
+            Vertices must be convex
         """
-        return openmc.Union([
-            stack[0].exclusion_zone(
-                away_from_plasma=True,
-                control_id=control_id,
-                additional_test_points=stack.exterior_wire.get_3D_coordinates(),
+        if self.array_type == BluemiraCellType.DIVERTOR:
+            return openmc.Union([
+                stack[0].exclusion_zone(
+                    away_from_plasma=True,
+                    control_id=control_id,
+                    additional_test_points=stack.exterior_wire.get_3D_coordinates(),
+                )
+                for stack in self.cell_array
+            ])
+        exclusion_zone_by_stack = []
+        for stack in self.cell_array:
+            stack_vertices = np.vstack((
+                stack[0].vertices.T[(1, 2),],
+                stack[-1].vertices.T[(3, 0),],
+            ))
+            if not is_convex(stack_vertices):
+                raise GeometryError(f"{self}'s vertices need to be convex!")
+
+            exclusion_zone_by_stack.append(
+                self.csg.region_from_surface_series(
+                    [stack.cw_surface, stack.ccw_surface, stack.interior_surface],
+                    stack_vertices,
+                    control_id=control_id,
+                )
             )
-            for stack in self.cell_array
-        ])
+        return openmc.Union(exclusion_zone_by_stack)
 
     @classmethod
-    def from_pre_cell_array(
+    def from_blanket_pre_cell_array(
+        cls,
+        pre_cell_array: PreCellArray,
+        materials: MaterialsLibrary,
+        blanket_dimensions: TokamakDimensions,
+        csg: BluemiraNeutronicsCSG,
+        *,
+        control_id: bool = False,
+    ) -> BluemiraCellArray:
+        """
+        Create a BluemiraCellArray from a
+        :class:`~bluemira.radiation_transport.neutronics.make_pre_cell.PreCellArray`.
+        This method assumes itself is the first method to be run to create cells in the
+        :class:`~openmc.Universe.`
+
+        Parameters
+        ----------
+        pre_cell_array
+            PreCellArray
+        materials
+            :class:`~MaterialsLibrary` so that it separates into .inboard, .outboard,
+            .divertor, .tf_coil_windings, etc.
+        blanket_dimensions
+            :class:`bluemira.radiation_transport.neutronics.params.TokamakDimensions`
+            recording the dimensions of the blanket in SI units (unit: [m]).
+        control_id
+            Passed as argument onto
+            :meth:`~bluemira.radiation_transport.neutronics.make_csg.BluemiraNeutronicsCSG.region_from_surface_series`.
+        """
+        cell_walls = pre_cell_array.cell_walls
+        # TODO @je-cook: when contorl_id, we're forced to start at id=0
+        # 3531
+
+        # left wall
+        ccw_surf = csg.surface_from_2points(
+            *cell_walls[0],
+            surface_id=1 if control_id else None,
+            name="Blanket cell wall 0",
+        )
+        cell_array = []
+        for i, (pre_cell, cw_wall) in enumerate(
+            zip(pre_cell_array.pre_cells, cell_walls[1:], strict=True)
+        ):
+            # right wall
+            cw_surf = csg.surface_from_2points(
+                *cw_wall,
+                surface_id=1 + 10 * (i + 1) if control_id else None,
+                name=f"Blanket cell wall of blanket cell stack {i + 1}",
+            )
+
+            stack = BluemiraCellStack.from_blanket_pre_cell(
+                pre_cell,
+                ccw_surf,
+                cw_surf,
+                get_depth_values(pre_cell, blanket_dimensions),
+                csg=csg,
+                fill_lib=materials,
+                inboard=check_inboard_outboard(pre_cell, blanket_dimensions),
+                blanket_stack_num=i if control_id else None,
+            )
+            cell_array.append(stack)
+            ccw_surf = cw_surf
+
+        return cls(cell_array, csg, BluemiraCellType.BLANKET)
+
+    @classmethod
+    def from_divertor_pre_cell_array(
         cls,
         pre_cell_array: DivertorPreCellArray,
         materials: MaterialsLibrary,
         divertor_thickness: DivertorThickness,
         csg: BluemiraNeutronicsCSG,
         override_start_end_surfaces: tuple[openmc.Surface, openmc.Surface] | None = None,
-    ) -> DivertorCellArray:
+    ) -> BluemiraCellArray:
         """
         Create the entire divertor from the pre-cell array.
 
@@ -2355,7 +2315,7 @@ class DivertorCellArray:
             else:
                 ccw_surf = csg.surface_from_straight_line(dpc.ccw_wall[-1].key_points)
             stack_list.append(
-                DivertorCellStack.from_divertor_pre_cell(
+                BluemiraCellStack.from_divertor_pre_cell(
                     dpc,
                     cw_surf,
                     ccw_surf,
@@ -2366,13 +2326,14 @@ class DivertorCellArray:
                 )
             )
             cw_surf = ccw_surf
-        return cls(stack_list)
+        return cls(stack_list, BluemiraNeutronicsCSG(), BluemiraCellType.DIVERTOR)
 
-    def get_hollow_merged_cells(self) -> list[openmc.Cell]:
+    '''def get_hollow_merged_cells(self) -> list[openmc.Cell]:
         """
         Returns a list of cells (unnamed, unspecified-ID) where each corresponds to a
         cell-stack.
         """
         return [
-            openmc.Cell(region=stack.get_overall_region()) for stack in self.cell_array
-        ]
+            openmc.Cell(region=stack.get_overall_region(BluemiraNeutronicsCSG()))
+            for stack in self.cell_array
+        ]'''
