@@ -109,7 +109,6 @@ def run_neutronics(
         divertor=ivc_shapes,
         blanket=blanket,
         vacuum_vessel=vacuum_vessel,
-        materials_library=material_library,
         panel_points=blanket.panel_points.T,
     )
 
@@ -123,6 +122,7 @@ def run_neutronics(
         params,
         build_config,
         neutronics_csg.cell_arrays,
+        material_library,
         source=source or make_pps_source,
         tally_function=tally_function,
     )

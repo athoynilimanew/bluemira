@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -29,6 +29,7 @@ from bluemira.radiation_transport.neutronics.slicing import (
 )
 
 if TYPE_CHECKING:
+    from matplotlib.axes import Axes
     from numpy import typing as npt
 
     from bluemira.base.reactor import ComponentManager
@@ -69,7 +70,7 @@ class ReactorGeometry:
 
     Parameters
     ----------
-    divertor_wire:
+    lower_divertor_inner_wire:
         The plasma-facing side of the divertor.
     panel_break_points:
         The start and end points for each first-wall panel
@@ -78,12 +79,15 @@ class ReactorGeometry:
         interface between the inside of the vacuum vessel and the outside of the blanket
     vacuum_vessel_wire:
         The outer-boundary of the vacuum vessel
+    customised_geometry:
+        only useful in case of user-defined customised reactor
     """
 
-    divertor_wire: BluemiraWire
+    lower_divertor_inner_wire: BluemiraWire
     panel_break_points: npt.NDArray
     vacuum_vessel_inner_wire: BluemiraWire
     vacuum_vessel_outer_wire: BluemiraWire
+    customised_geometry: Any | None = None
 
 
 @dataclass
@@ -278,7 +282,7 @@ class NeutronicsReactor(ABC):
 
     def _create_cell_stage(
         self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
-    ):
+    ) -> CellStage:
         if self.geometry_type == GeometryType.CUSTOM:
             # User's own method
             return self._create_cell_stage_custom(
@@ -295,7 +299,7 @@ class NeutronicsReactor(ABC):
                 self.geom.vacuum_vessel_outer_wire,
             ),
             divertor=DivertorWireAndExteriorCurve(
-                self.geom.divertor_wire,
+                self.geom.lower_divertor_inner_wire,
                 self.geom.vacuum_vessel_inner_wire,
                 self.geom.vacuum_vessel_outer_wire,
             ),
@@ -330,7 +334,7 @@ class NeutronicsReactor(ABC):
             control_id=True,
         )
 
-    def plot_2d(self, *args, **kwargs):
+    def plot_2d(self, *args, **kwargs) -> Axes:
         """
         Plot neutronics reactor 2d profile
 
@@ -373,7 +377,7 @@ class NeutronicsReactor(ABC):
         ...
 
     @abstractmethod
-    def plot_2d_custom(self, *args, **kwargs):
+    def plot_2d_custom(self, *args, **kwargs) -> Axes:
         """
         Plot neutronics reactor 2d profile, customised
         """

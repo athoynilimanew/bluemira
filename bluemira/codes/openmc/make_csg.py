@@ -83,7 +83,6 @@ class CellStage:
     radiation_shield: openmc.Cell
     ext_void: openmc.Cell
     universe: openmc.region.Intersection
-    materials: MaterialsLibrary
     bounding_box: tuple[float, ...]
     upper_divertor_region: BluemiraCellArray | None = None  # only for double null
 
@@ -895,8 +894,8 @@ def make_cell_arrays(
     )
 
     cell_stage = CellStage(
-        blanket=blanket,
-        divertor=divertor,
+        blanket_region=blanket,
+        lower_divertor_region=divertor,
         tf_coils=tf,
         cs_coil=cs,
         plasma=plasma,

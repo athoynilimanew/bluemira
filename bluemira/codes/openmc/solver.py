@@ -13,7 +13,7 @@ from dataclasses import dataclass, fields
 from enum import auto
 from operator import attrgetter
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import openmc
@@ -29,7 +29,7 @@ from bluemira.codes.interface import (
     CodesTask,
     CodesTeardown,
 )
-from bluemira.codes.openmc.make_csg import BlanketCellArray, CellStage, DivertorCellArray
+from bluemira.codes.openmc.make_csg import BluemiraCellArray, CellStage
 from bluemira.codes.openmc.output import OpenMCResult
 from bluemira.codes.openmc.params import (
     OpenMCNeutronicsSolverParams,
@@ -37,6 +37,9 @@ from bluemira.codes.openmc.params import (
 )
 from bluemira.codes.openmc.tallying import filter_cells
 from bluemira.plasma_physics.reactions import n_DT_reactions
+
+if TYPE_CHECKING:
+    from bluemira.codes.openmc.material import MaterialsLibrary
 
 
 class OpenMCRunModes(BaseRunMode):
@@ -156,8 +159,8 @@ class Setup(CodesSetup):
         self,
         run_mode,
         tally_function: TALLY_FUNCTION_TYPE,
-        blanket_cell_array: BlanketCellArray,
-        divertor_cell_array: DivertorCellArray,
+        blanket_cell_array: BluemiraCellArray,
+        divertor_cell_array: BluemiraCellArray,
         material_list: list[openmc.Material],
     ):
         out_path = Path(self.out_path, run_mode.name.lower(), "tallies.xml")
@@ -384,7 +387,7 @@ class Teardown(CodesTeardown):
 
 
 TALLY_FUNCTION_TYPE = Callable[
-    [list[openmc.Material], BlanketCellArray, DivertorCellArray],
+    [list[openmc.Material], BluemiraCellArray, BluemiraCellArray],
     tuple[
         str,
         str,
@@ -409,6 +412,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
         params: dict | ParameterFrame,
         build_config: dict,
         neutronics_cell_model: CellStage,
+        material_library: MaterialsLibrary,
         source: Callable[[PlasmaSourceParameters], openmc.source.SourceBase],
         tally_function: TALLY_FUNCTION_TYPE | None = None,
     ):
@@ -419,7 +423,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
 
         self.source = source
         self.cell_arrays = neutronics_cell_model
-        self.materials = self.cell_arrays.material_library
+        self.materials = material_library
 
         self.tally_function = filter_cells if tally_function is None else tally_function
 
