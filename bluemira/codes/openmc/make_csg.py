@@ -75,8 +75,8 @@ SHRINK_DISTANCE = 0.0005  # [m] = 0.05cm = 0.5 mm
 class CellStage:
     """Stage of making cells."""
 
-    blanket: BluemiraCellArray
-    divertor: BluemiraCellArray
+    blanket_region: BluemiraCellArray
+    lower_divertor_region: BluemiraCellArray
     tf_coils: list[openmc.Cell]
     cs_coil: openmc.Cell
     plasma: openmc.Cell
@@ -85,12 +85,26 @@ class CellStage:
     universe: openmc.region.Intersection
     materials: MaterialsLibrary
     bounding_box: tuple[float, ...]
+    upper_divertor_region: BluemiraCellArray | None = None  # only for double null
 
     @property
     def cells(self):
         """Get the list of all cells."""
+        if self.upper_divertor_region:
+            return (
+                *chain.from_iterable((
+                    *self.upper_divertor_region,
+                    *self.blanket_region,
+                    *self.lower_divertor_region,
+                )),
+                *self.tf_coils,
+                self.cs_coil,
+                self.plasma,
+                self.radiation_shield,
+                self.ext_void,
+            )
         return (
-            *chain.from_iterable((*self.blanket, *self.divertor)),
+            *chain.from_iterable((*self.blanket_region, *self.lower_divertor_region)),
             *self.tf_coils,
             self.cs_coil,
             self.plasma,
@@ -100,16 +114,48 @@ class CellStage:
 
     def get_all_hollow_merged_cells(self):
         """Blanket and divertor cells"""
+        if self.upper_divertor_region:
+            return [
+                *[
+                    openmc.Cell(region=stack.get_overall_region())
+                    for stack in self.upper_divertor_region
+                ],
+                *[
+                    openmc.Cell(region=stack.get_overall_region())
+                    for stack in self.blanket_region
+                ],
+                *[
+                    openmc.Cell(region=stack.get_overall_region())
+                    for stack in self.lower_divertor_region
+                ],
+            ]
+
         return [
-            *[openmc.Cell(region=stack.get_overall_region()) for stack in self.blanket],
-            *[openmc.Cell(region=stack.get_overall_region()) for stack in self.divertor],
+            *[
+                openmc.Cell(region=stack.get_overall_region())
+                for stack in self.blanket_region
+            ],
+            *[
+                openmc.Cell(region=stack.get_overall_region())
+                for stack in self.lower_divertor_region
+            ],
         ]
 
     def set_volumes(self):
         """
         Sets the volume of the voids. Not necessary/ used anywhere yet.
         """
-        ext_vertices = exterior_vertices(self.blanket, self.divertor)
+        if self.upper_divertor_region:
+            ext_vertices = exterior_vertices_DN(
+                self.upper_divertor_region,
+                self.blanket_region,
+                self.lower_divertor_region,
+            )
+        else:
+            ext_vertices = exterior_vertices_SN(
+                self.blanket_region, self.lower_divertor_region
+            )
+
         total_universe_volume = (
             #  top - bottom
             (self.universe[0].surface.z0 - self.universe[1].surface.z0)
@@ -130,11 +176,30 @@ class CellStage:
         if self.cs_coil:
             ext_void_volume -= self.cs_coil.volume
         self.ext_void.volume = ext_void_volume
-        blanket_volumes = sum(cell.volume for cell in chain.from_iterable(self.blanket))
-        divertor_volumes = sum(
-            cell.volume for cell in chain.from_iterable(self.divertor)
+        blanket_volumes = sum(
+            cell.volume for cell in chain.from_iterable(self.blanket_region)
         )
-        self.plasma.volume = outer_boundary_volume - blanket_volumes - divertor_volumes
+        if self.upper_divertor_region:
+            upper_divertor_volumes = sum(
+                cell.volume for cell in chain.from_iterable(self.upper_divertor_region)
+            )
+            lower_divertor_volumes = sum(
+                cell.volume for cell in chain.from_iterable(self.lower_divertor_region)
+            )
+            self.plasma.volume = (
+                outer_boundary_volume
+                - blanket_volumes
+                - upper_divertor_volumes
+                - lower_divertor_volumes
+            )
+        else:
+            divertor_volumes = sum(
+                cell.volume for cell in chain.from_iterable(self.lower_divertor_region)
+            )
+
+            self.plasma.volume = (
+                outer_boundary_volume - blanket_volumes - divertor_volumes
+            )
 
 
 def is_monotonically_increasing(series):
@@ -453,7 +518,7 @@ def round_up_next_openmc_ids(surface_step_size: int = 1000, cell_step_size: int 
     )
 
 
-def exterior_vertices(blanket, divertor) -> npt.NDArray:
+def exterior_vertices_SN(blanket, divertor) -> npt.NDArray:
     """
     Get the 3D coordinates of every point at the outer boundary of the tokamak's
     poloidal cross-section.
@@ -469,6 +534,22 @@ def exterior_vertices(blanket, divertor) -> npt.NDArray:
     return np.concatenate([
         blanket.exterior_vertices(),
         divertor.exterior_vertices()[::-1],
+    ])
+
+
+def exterior_vertices_DN(upper_divertor, blanket, lower_divertor) -> npt.NDArray:
+    """
+    Get the 3D coordinates of every point at the outer boundary of the tokamak's
+    poloidal cross-section.
+
+    Returns
+    -------
+    npt.NDArray
+    """
+    return np.concatenate([
+        upper_divertor.exterior_vertices()[::-1],
+        blanket.exterior_vertices(),
+        lower_divertor.exterior_vertices()[::-1],
     ])
 
 
