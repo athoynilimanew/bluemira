@@ -2408,13 +2408,3 @@ class BluemiraCellArray:
             )
             cw_surf = ccw_surf
         return cls(stack_list, BluemiraNeutronicsCSG(), BluemiraCellType.DIVERTOR)
-
-    '''def get_hollow_merged_cells(self) -> list[openmc.Cell]:
-        """
-        Returns a list of cells (unnamed, unspecified-ID) where each corresponds to a
-        cell-stack.
-        """
-        return [
-            openmc.Cell(region=stack.get_overall_region(BluemiraNeutronicsCSG()))
-            for stack in self.cell_array
-        ]'''
