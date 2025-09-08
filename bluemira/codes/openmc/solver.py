@@ -14,6 +14,7 @@ from enum import auto
 from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import numpy as np
 import openmc
@@ -654,6 +655,7 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
         params: dict | ParameterFrame,
         build_config: dict,
         eq: Equilibrium,
+        material_library: MaterialsLibrary,
         source: NeutronSourceCreator,
     ):
         self.params = make_parameter_frame(params, self.param_cls)

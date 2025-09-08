@@ -138,7 +138,6 @@ def run_csg_neutronics(
         divertor=ivc_shapes,
         blanket=blanket,
         vacuum_vessel=vacuum_vessel,
-        materials_library=material_library,
         panel_points=blanket.panel_points.T,
     )
 
@@ -153,6 +152,7 @@ def run_csg_neutronics(
         build_config,
         neutronics_csg.cell_arrays,
         eq,
+        material_library,
         source=source or make_tokamak_source,
         op_cond=op_cond,
         tally_function=tally_function,
