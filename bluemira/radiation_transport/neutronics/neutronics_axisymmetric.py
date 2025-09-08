@@ -281,7 +281,7 @@ class NeutronicsReactor(ABC):
     ):
         if self.geometry_type == GeometryType.CUSTOM:
             # User's own method
-            return self._customised_cell_stage(
+            return self._create_cell_stage_custom(
                 blanket_discretisation=blanket_discretisation,
                 divertor_discretisation=divertor_discretisation,
                 snap_to_horizontal_angle=snap_to_horizontal_angle,
@@ -330,16 +330,6 @@ class NeutronicsReactor(ABC):
             control_id=True,
         )
 
-    @property
-    def blanket(self):
-        """Blanket pre cell"""
-        return self.blanket_pre_cell_array
-
-    @property
-    def divertor(self):
-        """Divertor pre cell"""
-        return self.divertor_pre_cell_array
-
     def plot_2d(self, *args, **kwargs):
         """
         Plot neutronics reactor 2d profile
@@ -349,10 +339,14 @@ class NeutronicsReactor(ABC):
         :
             Axes on which the reactor is plotted.
         """
+        if self.geometry_type == GeometryType.CUSTOM:
+            # User's own method
+            return self.plot_2d_custom(*args, **kwargs)
+
         show = kwargs.pop("show", True)
         ax = kwargs.pop("ax", None)
-        ax = self.blanket.plot_2d(*args, ax=ax, show=False, **kwargs)
-        return self.divertor.plot_2d(*args, ax=ax, show=show, **kwargs)
+        ax = self.blanket_pre_cell_array.plot_2d(*args, ax=ax, show=False, **kwargs)
+        return self.divertor_pre_cell_array.plot_2d(*args, ax=ax, show=show, **kwargs)
 
     @abstractmethod
     def _get_wires_from_components(
@@ -367,7 +361,7 @@ class NeutronicsReactor(ABC):
         ...
 
     @abstractmethod
-    def _customised_cell_stage(
+    def _create_cell_stage_custom(
         self,
         blanket_discretisation: int,
         divertor_discretisation: int,
@@ -376,4 +370,11 @@ class NeutronicsReactor(ABC):
         control_id: bool = False,
     ) -> CellStage:
         """Customised Pre-cell making stage"""
+        ...
+
+    @abstractmethod
+    def plot_2d_custom(self, *args, **kwargs):
+        """
+        Plot neutronics reactor 2d profile, customised
+        """
         ...
