@@ -9,7 +9,6 @@ Definition of a simple panelling optimisation problem for neutronics.
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
@@ -25,11 +24,11 @@ if TYPE_CHECKING:
     from bluemira.geometry.wire import BluemiraWire
 
 
-class SimplePanellingOptProblem:
+class PanellingByDiscretisationOptProblem:
     """
     Optimisation problem to minimise the change in
-    panel areas (or volume)  panelling a wire,
-    assuming the wire is simple.
+    panel areas (or volume) for first wall inner wire panelling,
+    constrained by the "discretisation_range" provided in  the config.
     """
 
     def __init__(
@@ -52,7 +51,7 @@ class SimplePanellingOptProblem:
 
     def objective(self, x: np.ndarray) -> float:
         """
-        Objective function to minimise total deviated area or volume.
+        Objective function to minimise total change in area or volume.
 
         Parameters
         ----------
@@ -62,7 +61,7 @@ class SimplePanellingOptProblem:
         Returns
         -------
         float
-            Total 'deviated' panel areas or volumes.
+            Total change in panel areas or volumes.
         """
         if self.by_volume:
             return self.volume_objective(x)
@@ -70,7 +69,7 @@ class SimplePanellingOptProblem:
 
     def area_objective(self, x: np.ndarray) -> float:
         """
-        Objective function to minimise total deviated area.
+        Objective function to minimise total change in area.
 
         Parameters
         ----------
@@ -80,7 +79,7 @@ class SimplePanellingOptProblem:
         Returns
         -------
         float
-            Total 'deviated' panel areas / Total Area
+            Total change in panel areas / Total Area
         """
         n_panels = int(np.clip(round(x[0]), self.min_dscr, self.max_dscr))
 
@@ -89,19 +88,19 @@ class SimplePanellingOptProblem:
             self.wire, Coordinates(panel_points[1:-1])
         )
 
-        deviated_panel_areas = []
+        panel_area_change = []
         for wire in panel_wires:
-            closed_wire = deepcopy(wire)
-            closed_wire.close()
-            deviated_panel_areas.append(BluemiraFace(closed_wire).area)
+            # close the wire
+            wire.close()
+            panel_area_change.append(BluemiraFace(wire).area)
 
-        return sum(deviated_panel_areas) / self.scale
+        return sum(panel_area_change) / self.scale
 
     def volume_objective(self, x: np.ndarray) -> float:
         """
-        Objective function to minimise total deviated volume.
+        Objective function to minimise total change in volume.
 
-        (slightly accurate, but slower than the area_objective)
+        (Slightly more accurate, but slower than the area_objective)
 
         Parameters
         ----------
@@ -111,7 +110,7 @@ class SimplePanellingOptProblem:
         Returns
         -------
         float
-            Total 'deviated' panel volumes / Total Vol
+            Total change in panel volumes / Total Vol
         """
         n_panels = int(np.clip(round(x[0]), self.min_dscr, self.max_dscr))
 
@@ -120,23 +119,20 @@ class SimplePanellingOptProblem:
             self.wire, Coordinates(panel_points[1:-1])
         )
 
-        deviated_panel_volumes = []
+        panel_vol_change = []
         for wire in panel_wires:
-            closed_wire = deepcopy(wire)
-            closed_wire.close()
-            revolved_solid = revolve_shape(
-                BluemiraFace(closed_wire), [0, 0, 0], [0, 0, 1], 360
-            )
-            deviated_panel_volumes.append(revolved_solid.volume)
+            wire.close()
+            revolved_solid = revolve_shape(BluemiraFace(wire), [0, 0, 0], [0, 0, 1], 360)
+            panel_vol_change.append(revolved_solid.volume)
 
-        return sum(deviated_panel_volumes) / self.scale
+        return sum(panel_vol_change) / self.scale
 
     def grid_search_n_panels(self) -> int:
         """
         Grid search to find the number of panels balancing
         objective reduction and complexity
         using the elbow method with early stopping based on
-        relative improvement and max deviated fraction.
+        relative improvement and max change in fraction.
 
         Returns
         -------
@@ -183,7 +179,7 @@ class SimplePanellingOptProblem:
         Returns
         -------
         int
-            Selected number of panels by elbow and max deviated fraction criteria.
+            Selected number of panels by elbow and max change in fraction criteria.
         """
         points = np.column_stack((history_n, history_obj))
         start, end = points[0], points[-1]
@@ -211,7 +207,7 @@ class SimplePanellingOptProblem:
                 below_tol_indices[0]
             ]  # largest n_panels with obj <= max_fractional_change
             bluemira_warn(
-                f"Elbow objective {best_obj:.6f} above max deviated fraction. "
+                f"Elbow objective {best_obj:.6f} above max change in fraction. "
                 f"Returning panel count {chosen_n} just below threshold."
             )
             return chosen_n
@@ -219,7 +215,7 @@ class SimplePanellingOptProblem:
         # No objectives below max_fractional_change; pick panel with minimum objective
         chosen_n = history_n[int(np.argmin(history_obj))]
         bluemira_warn(
-            f"Elbow objective {best_obj:.6f} above max deviated fraction "
+            f"Elbow objective {best_obj:.6f} above max change in fraction "
             f"and no objectives below threshold. "
             f"Returning panel count {chosen_n} with minimum objective."
         )
