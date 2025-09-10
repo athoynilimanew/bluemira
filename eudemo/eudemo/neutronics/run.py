@@ -131,13 +131,13 @@ def run_csg_neutronics(
         source="CSG Neutronics",
     )
 
-    # TODO: Directly make cell arrays
     neutronics_csg = EUDEMONeutronicsCSGReactor(
         geometry_type=GeometryType.SN_INTEGRATED,
         params=csg_params,
         divertor=ivc_shapes,
         blanket=blanket,
         vacuum_vessel=vacuum_vessel,
+        materials_library=material_library,
         panel_points=blanket.panel_points.T,
     )
 

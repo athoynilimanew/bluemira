@@ -14,7 +14,6 @@ from enum import auto
 from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
-from typing import Literal, TypeAlias
 
 import numpy as np
 import openmc
@@ -50,6 +49,7 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matproplib.conditions import OperationalConditions
 
+if TYPE_CHECKING:
     from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
         NeutronicsReactor,
     )
@@ -164,6 +164,8 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         eq: Equilibrium,
         source,
         materials,
+        bounding_box,
+        half_bounding_box,
     ):
         super().__init__(None, codes_name)
 
