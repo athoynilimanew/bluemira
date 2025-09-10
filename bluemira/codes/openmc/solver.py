@@ -14,7 +14,7 @@ from enum import auto
 from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 import numpy as np
 import openmc
