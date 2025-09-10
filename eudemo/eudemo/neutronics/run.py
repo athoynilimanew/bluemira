@@ -139,6 +139,7 @@ def run_csg_neutronics(
         vacuum_vessel=vacuum_vessel,
         materials_library=material_library,
         panel_points=blanket.panel_points.T,
+        tally_function=tally_function,
     )
 
     if source is None:
