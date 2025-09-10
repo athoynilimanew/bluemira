@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         PreCellArray,
     )
     from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
-        NeutronicsReactor,
+        PreCellStage,
     )
     from bluemira.radiation_transport.neutronics.wires import (
         StraightLineInfo,
@@ -710,9 +710,10 @@ def make_void_cells(
 
 
 def make_cell_arrays(
-    pre_cell_reactor: NeutronicsReactor,
+    pre_cell_stage: PreCellStage,
     csg: BluemiraNeutronicsCSG,
     materials: MaterialsLibrary,
+    tokamak_dimensions: TokamakDimensions,
     *,
     control_id: bool = False,
 ) -> CellStage:
@@ -737,13 +738,13 @@ def make_cell_arrays(
     """
     # determine universe_box
 
-    z_max, z_min, r_max, r_min = pre_cell_reactor.half_bounding_box
+    z_max, z_min, r_max, r_min = pre_cell_stage.half_bounding_box()
 
     z_min_adj = z_min - D_TOLERANCE
     z_max_adj = z_max + D_TOLERANCE
     r_max_adj = r_max + D_TOLERANCE
 
-    rad_shield_wall_tk = pre_cell_reactor.tokamak_dimensions.rad_shield.wall
+    rad_shield_wall_tk = tokamak_dimensions.rad_shield.wall
 
     # make the universe box, incorporates the radiation shield wall
     universe = make_universe_box(
@@ -755,9 +756,9 @@ def make_cell_arrays(
     )
 
     blanket = BlanketCellArray.from_pre_cell_array(
-        pre_cell_reactor.blanket,
+        pre_cell_stage.blanket,
         materials,
-        pre_cell_reactor.tokamak_dimensions,
+        tokamak_dimensions,
         csg,
         control_id=control_id,
     )
@@ -768,9 +769,9 @@ def make_cell_arrays(
         round_up_next_openmc_ids()
 
     divertor = DivertorCellArray.from_pre_cell_array(
-        pre_cell_reactor.divertor,
+        pre_cell_stage.divertor,
         materials,
-        pre_cell_reactor.tokamak_dimensions.divertor,
+        tokamak_dimensions.divertor,
         csg=csg,
         override_start_end_surfaces=(blanket[0].ccw_surface, blanket[-1].cw_surface),
         # ID cannot be controlled at this point.
@@ -782,8 +783,8 @@ def make_cell_arrays(
 
     cs, tf = make_coils(
         csg,
-        r_min - pre_cell_reactor.tokamak_dimensions.cs_coil.thickness,
-        pre_cell_reactor.tokamak_dimensions.cs_coil.thickness,
+        r_min - tokamak_dimensions.cs_coil.thickness,
+        tokamak_dimensions.cs_coil.thickness,
         z_min_adj,
         z_max_adj,
         materials,
