@@ -10,7 +10,7 @@ in this module are in SI (distrance:[m]) unless otherwise specified by the docst
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING
 
@@ -20,6 +20,7 @@ import openmc
 import openmc.region
 
 from bluemira.codes.openmc.material import CellType
+from bluemira.codes.openmc.tallying import filter_cells
 from bluemira.geometry.constants import D_TOLERANCE
 from bluemira.geometry.error import GeometryError
 from bluemira.geometry.solid import BluemiraSolid
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from bluemira.codes.openmc.material import MaterialsLibrary
+    from bluemira.codes.openmc.solver import TALLY_FUNCTION_TYPE
     from bluemira.geometry.coordinates import Coordinates
     from bluemira.radiation_transport.neutronics.geometry import (
         DivertorThickness,
@@ -56,12 +58,12 @@ if TYPE_CHECKING:
         DivertorPreCellArray,
         PreCell,
         PreCellArray,
+        PreCellStage,
     )
     from bluemira.radiation_transport.neutronics.wires import (
         StraightLineInfo,
         WireInfoList,
     )
-
 
 # Found to work by trial and error. I'm sorry.
 SHRINK_DISTANCE = 0.0005  # [m] = 0.05cm = 0.5 mm
@@ -71,8 +73,8 @@ SHRINK_DISTANCE = 0.0005  # [m] = 0.05cm = 0.5 mm
 class CellStage:
     """Stage of making cells."""
 
-    blanket: BlanketCellArray
-    divertor: DivertorCellArray
+    blanket: list[openmc.Cell]
+    divertor: list[openmc.Cell]
     tf_coils: list[openmc.Cell]
     cs_coil: openmc.Cell
     plasma: openmc.Cell
@@ -92,14 +94,162 @@ class CellStage:
             self.ext_void,
         )
 
-    def get_all_hollow_merged_cells(self):
-        """Blanket and divertor cells"""
-        return [
-            *[openmc.Cell(region=stack.get_overall_region()) for stack in self.blanket],
-            *[openmc.Cell(region=stack.get_overall_region()) for stack in self.divertor],
-        ]
+    @classmethod
+    def from_pre_cell_stage(
+        cls,
+        pre_cell_stage: PreCellStage,
+        tokamak_dimensions: TokamakDimensions,
+        material_library: MaterialsLibrary,
+        csg: BluemiraNeutronicsCSG,
+        tally_function: TALLY_FUNCTION_TYPE | None = None,
+        *,
+        control_id: bool = False,
+    ) -> CellStage:
+        """
+        Make CellStage from PrecellStage
 
-    def set_volumes(self):
+        Parameters
+        ----------
+        pre_cell_stage:
+            Precell Stage containing blanket and divertor pre-cells
+        tokamak_dimensions:
+            A parameter
+            :class:`bluemira.radiation_transport.neutronics.params.TokamakDimensions`,
+            Specifying the dimensions of various layers in the blanket, divertor, and
+            central solenoid.
+        control_id: bool
+            Whether to set the blanket Cells and surface IDs by force or not.
+            With this set to True, it will be easier to understand where each cell came
+            from. However, it will lead to warnings and errors if a cell/surface is
+            generated to use a cell/surface ID that has already been used respectively.
+            Keep this as False if you're running openmc simulations multiple times in one
+            session.
+
+        Returns
+        -------
+        CellStage
+        """
+        # determine universe_box
+
+        z_max, z_min, r_max, r_min = pre_cell_stage.half_bounding_box()
+
+        z_min_adj = z_min - D_TOLERANCE
+        z_max_adj = z_max + D_TOLERANCE
+        r_max_adj = r_max + D_TOLERANCE
+
+        rad_shield_wall_tk = tokamak_dimensions.rad_shield.wall
+
+        # make the universe box, incorporates the radiation shield wall
+        universe = make_universe_box(
+            csg,
+            z_min_adj - rad_shield_wall_tk,
+            z_max_adj + rad_shield_wall_tk,
+            r_max_adj + rad_shield_wall_tk,
+            control_id=control_id,
+        )
+
+        blanket = BlanketCellArray.from_pre_cell_array(
+            pre_cell_stage.blanket,
+            material_library,
+            tokamak_dimensions,
+            csg,
+            control_id=control_id,
+        )
+
+        # change the cell and surface id register before making the divertor.
+        # (ids will only count up from here.)
+        if control_id:
+            round_up_next_openmc_ids()
+
+        divertor = DivertorCellArray.from_pre_cell_array(
+            pre_cell_stage.divertor,
+            material_library,
+            tokamak_dimensions.divertor,
+            csg=csg,
+            override_start_end_surfaces=(blanket[0].ccw_surface, blanket[-1].cw_surface),
+            # ID cannot be controlled at this point.
+        )
+
+        # make the plasma cell and the exterior void.
+        if control_id:
+            round_up_next_openmc_ids()
+
+        cs, tf = make_coils(
+            csg,
+            r_min - tokamak_dimensions.cs_coil.thickness,
+            tokamak_dimensions.cs_coil.thickness,
+            z_min_adj,
+            z_max_adj,
+            material_library,
+        )
+        # make the radiation shield wall
+        # which is a hollow of the universe box
+        rad_shield = make_radiation_shield_box(
+            csg,
+            z_min_adj,
+            z_max_adj,
+            r_max_adj,
+            universe,
+            material_library,
+        )
+        plasma, ext_void = make_void_cells(
+            csg,
+            universe=universe,
+            blanket=blanket,
+            divertor=divertor,
+            central_solenoid=cs,
+            tf_coils=tf,
+            rad_shield=rad_shield,
+            control_id=control_id,
+        )
+
+        cell_stage = cls(
+            blanket=blanket.get_hollow_merged_cells(),
+            divertor=divertor.get_hollow_merged_cells(),
+            tf_coils=tf,
+            cs_coil=cs,
+            plasma=plasma,
+            radiation_shield=rad_shield,
+            ext_void=ext_void,
+            universe=universe,
+        )
+        cell_stage.set_volumes(blanket, divertor)
+
+        cell_stage.set_list_of_tallies(
+            blanket_cell_array=blanket,
+            divertor_cell_array=divertor,
+            material_list=[
+                getattr(material_library, f.name) for f in fields(material_library)
+            ],
+            tally_function=tally_function,
+        )
+        return cell_stage
+
+    def set_list_of_tallies(
+        self,
+        blanket_cell_array: BlanketCellArray,
+        divertor_cell_array: DivertorCellArray,
+        material_list: list[openmc.Material],
+        tally_function: TALLY_FUNCTION_TYPE | None = None,
+    ) -> list[openmc.Tally]:
+        """Set list of tallies"""
+        self.tally_func = filter_cells if tally_function is None else tally_function
+
+        tallies_list: list[openmc.Tally] = []
+        for name, scores, filters in self.tally_func(
+            material_list, blanket_cell_array, divertor_cell_array
+        ):
+            tally = openmc.Tally(name=name)
+            tally.scores = [scores] if isinstance(scores, str) else scores
+            tally.filters = filters
+            tallies_list.append(tally)
+
+        self.list_of_tallies = tallies_list
+        return tallies_list
+
+    def set_volumes(
+        self, blanket_array: BlanketCellArray, divertor_array: DivertorCellArray
+    ):
         """
         Sets the volume of the voids. Not necessary/ used anywhere yet.
         """
@@ -124,9 +274,9 @@ class CellStage:
         if self.cs_coil:
             ext_void_volume -= self.cs_coil.volume
         self.ext_void.volume = ext_void_volume
-        blanket_volumes = sum(cell.volume for cell in chain.from_iterable(self.blanket))
+        blanket_volumes = sum(cell.volume for cell in chain.from_iterable(blanket_array))
         divertor_volumes = sum(
-            cell.volume for cell in chain.from_iterable(self.divertor)
+            cell.volume for cell in chain.from_iterable(divertor_array)
         )
         self.plasma.volume = outer_boundary_volume - blanket_volumes - divertor_volumes
 
@@ -1645,6 +1795,16 @@ class BlanketCellArray:
             ccw_surf = cw_surf
 
         return cls(cell_array, csg)
+
+    def get_hollow_merged_cells(self) -> list[openmc.Cell]:
+        """
+        Returns a list of cells (unnamed, unspecified-ID) where each corresponds to a
+        cell-stack.
+        """
+        return [
+            openmc.Cell(region=stack.get_overall_region(BluemiraNeutronicsCSG()))
+            for stack in self.blanket_cell_array
+        ]
 
 
 class DivertorCell(openmc.Cell):

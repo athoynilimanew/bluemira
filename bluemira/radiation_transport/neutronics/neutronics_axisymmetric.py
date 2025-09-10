@@ -14,26 +14,15 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import Parameter, ParameterFrame, make_parameter_frame
 from bluemira.codes.openmc.make_csg import (
-    BlanketCellArray,
+    TALLY_FUNCTION_TYPE,
     BluemiraNeutronicsCSG,
     CellStage,
-    DivertorCellArray,
-    make_coils,
-    make_radiation_shield_box,
-    make_universe_box,
-    make_void_cells,
-    round_up_next_openmc_ids,
 )
 from bluemira.codes.openmc.material import MaterialsLibrary
-from bluemira.geometry.constants import D_TOLERANCE
-from bluemira.geometry.plane import calculate_plane_dir
-from bluemira.geometry.tools import get_wire_plane_intersect, make_polygon
-from bluemira.radiation_transport.neutronics.make_pre_cell import PreCell
+from bluemira.radiation_transport.neutronics.make_pre_cell import PreCellStage
 from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 from bluemira.radiation_transport.neutronics.slicing import (
     DivertorWireAndExteriorCurve,
@@ -49,10 +38,6 @@ if TYPE_CHECKING:
     from bluemira.base.reactor import ComponentManager
     from bluemira.geometry.wire import BluemiraWire
     from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
-    from bluemira.radiation_transport.neutronics.make_pre_cell import (
-        DivertorPreCellArray,
-        PreCellArray,
-    )
 
 
 class GeometryType(Enum):
@@ -109,134 +94,6 @@ class CuttingStage:
     divertor: DivertorWireAndExteriorCurve
 
 
-class PreCellStage:
-    """Stage of making pre-cells"""
-
-    def __init__(self, blanket: PreCellArray, divertor: DivertorPreCellArray):
-        """Check convexity after initialization"""
-        self.blanket = blanket.copy()
-        self.divertor = divertor
-        # 1. stretch first blanket cell in PreCellArray to reach div_start_wire
-        div_start_wire = self.divertor[0].cw_wall.restore_to_wire()
-        # pull everything down to: div_start_wire.
-        # Alternatively, choose div_start_wire=self.divertor[0].outline
-        old_vv_wire = self.blanket[0].vv_wire
-        ext_pt, i_high, i_low = np.insert(self.blanket[0].vertex, 1, 0, axis=0).T[:3]
-        i_end = get_wire_plane_intersect(
-            div_start_wire, *calculate_plane_dir(i_high, i_low)
-        )
-        # v_end = get_wire_plane_intersect(
-        #     div_start_wire,
-        #     *calculate_plane_dir(old_vv_wire.end_point().xyz.flatten(),
-        #     old_vv_wire.start_point().xyz.flatten())
-        # )
-        in_wire = make_polygon(np.array([i_high, i_end]).T, closed=False)
-        vv_wire = make_polygon(
-            np.array([
-                self.divertor[0].vv_wire.end_point,
-                old_vv_wire.end_point().xyz.flatten(),
-            ]).T,
-            closed=False,
-        )
-        ex_wire = make_polygon(
-            np.array([self.divertor[0].vertex.T[0], ext_pt]).T, closed=False
-        )
-        new_start_cell = PreCell(in_wire, vv_wire, ex_wire)
-        self.blanket[0] = new_start_cell
-
-        # 2. stretch first blanket cell in PreCellArray to reach div_end_wire
-        div_end_wire = self.divertor[-1].ccw_wall.restore_to_wire()
-        old_vv_wire = self.blanket[-1].vv_wire
-        i_low, i_high, ext_pt = np.insert(self.blanket[-1].vertex, 1, 0, axis=0).T[-3:]
-        i_start = get_wire_plane_intersect(
-            div_end_wire, *calculate_plane_dir(i_high, i_low)
-        )
-        # v_end = get_wire_plane_intersect(
-        #     div_end_wire,
-        #     *calculate_plane_dir(old_vv_wire.start_point().xyz.flatten(),
-        #     old_vv_wire.end_point().xyz.flatten())
-        # )
-        in_wire = make_polygon(np.array([i_start, i_high]).T, closed=False)
-        vv_wire = make_polygon(
-            np.array([
-                old_vv_wire.start_point().xyz.flatten(),
-                self.divertor[-1].vv_wire.start_point,
-            ]).T,
-            closed=False,
-        )
-        ex_wire = make_polygon(
-            np.array([ext_pt, self.divertor[-1].vertex.T[-1]]).T, closed=False
-        )
-        new_end_cell = PreCell(in_wire, vv_wire, ex_wire)
-        self.blanket[-1] = new_end_cell
-
-        # re-initialize so that the cell_walls are re-calculated
-        self.blanket = self.blanket.copy()
-
-    def external_coordinates(self) -> npt.NDArray:
-        """
-        Get the outermost coordinates of the tokamak cross-section from pre-cell array
-        and divertor pre-cell array.
-        Runs clockwise, beginning at the inboard blanket-divertor joint.
-
-        Returns
-        -------
-        :
-            All vertices on the exterior of the blanket and the divertor.
-        """
-        return np.concatenate([
-            self.blanket.exterior_vertices(),
-            self.divertor.exterior_vertices()[::-1],
-        ])
-
-    def bounding_box(self) -> tuple[float, ...]:
-        """
-        Get bounding box of pre cell stage
-
-        Returns
-        -------
-        z_max:
-            The maximum height of the bounding box.
-        z_min:
-            The minimum height of the bounding box.
-        r_max:
-            The maximum major radius reached by the pre-cells.
-        -r_max:
-            The minimum major radius reached by the pre-cells. Due to axial symmetry,
-            this must be =-r_max.
-        """
-        all_ext_vertices = self.external_coordinates()
-        z_min = all_ext_vertices[:, -1].min()
-        z_max = all_ext_vertices[:, -1].max()
-        r_max = max(abs(all_ext_vertices[:, 0]))
-        return z_max, z_min, r_max, -r_max
-
-    def half_bounding_box(self) -> tuple[float, ...]:
-        """
-        Get bounding box of the 2D poloidal cross-section of the right-hand half of the
-        reactor.
-
-        Returns
-        -------
-        z_max:
-            The maximum height of the bounding box.
-        z_min:
-            The minimum height of the bounding box.
-        r_max:
-            The maximum major radius reached by the pre-cells.
-        r_min:
-            The minimum major radius reached by the pre-cells on one side of the xz cross
-            section. This is typically non-zero because pre-cells should not cross the
-            z-axis of symmetry.
-        """
-        all_ext_vertices = self.external_coordinates()
-        z_min = all_ext_vertices[:, -1].min()
-        z_max = all_ext_vertices[:, -1].max()
-        r_max = max(abs(all_ext_vertices[:, 0]))
-        r_min = min(abs(all_ext_vertices[:, 0]))
-        return z_max, z_min, r_max, r_min
-
-
 @dataclass
 class NeutronicsReactorParameterFrame(ParameterFrame):
     """Neutronics reactor parameters"""
@@ -270,6 +127,7 @@ class NeutronicsReactor(ABC):
         first_wall: ComponentManager | None = None,
         panel_points: npt.NDArray | None = None,
         material_mapping: dict | None = None,
+        tally_function: TALLY_FUNCTION_TYPE | None = None,
         *,
         snap_to_horizontal_angle: float = 45,
         blanket_discretisation: int = 10,
@@ -311,10 +169,15 @@ class NeutronicsReactor(ABC):
             blanket_discretisation=blanket_discretisation,
             divertor_discretisation=divertor_discretisation,
             snap_to_horizontal_angle=snap_to_horizontal_angle,
+            tally_function=tally_function,
         )
 
     def _create_cell_stage(
-        self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
+        self,
+        blanket_discretisation: int,
+        divertor_discretisation: int,
+        snap_to_horizontal_angle: float,
+        tally_function: TALLY_FUNCTION_TYPE | None = None,
     ) -> CellStage:
         if self.geometry_type == GeometryType.CUSTOM:
             # User's own methods
@@ -324,8 +187,7 @@ class NeutronicsReactor(ABC):
                 snap_to_horizontal_angle=snap_to_horizontal_angle,
             )
             return self._make_cell_arrays_custom(
-                csg=BluemiraNeutronicsCSG(),
-                control_id=True,
+                csg=BluemiraNeutronicsCSG(), control_id=True
             )
 
         self._pre_cell_stage = self._cut_and_create_pre_cell_stage(
@@ -334,8 +196,12 @@ class NeutronicsReactor(ABC):
             snap_to_horizontal_angle=snap_to_horizontal_angle,
         )
 
-        return self._make_cell_arrays(
+        return CellStage.from_pre_cell_stage(
+            pre_cell_stage=self._pre_cell_stage,
+            tokamak_dimensions=self.tokamak_dimensions,
+            material_library=self.material_library,
             csg=BluemiraNeutronicsCSG(),
+            tally_function=tally_function,
             control_id=True,
         )
 
@@ -376,124 +242,6 @@ class NeutronicsReactor(ABC):
         return PreCellStage(
             blanket=blanket.straighten_exterior(preserve_volume=True), divertor=divertor
         )
-
-    def _make_cell_arrays(
-        self,
-        csg: BluemiraNeutronicsCSG,
-        *,
-        control_id: bool = False,
-    ) -> CellStage:
-        """
-        Make pre-cell arrays for the blanket and the divertor.
-
-        Parameters
-        ----------
-        materials:
-            library containing information about the materials
-        tokamak_dimensions:
-            A parameter
-            :class:`bluemira.radiation_transport.neutronics.params.TokamakDimensions`,
-            Specifying the dimensions of various layers in the blanket, divertor, and
-            central solenoid.
-        control_id: bool
-            Whether to set the blanket Cells and surface IDs by force or not.
-            With this set to True, it will be easier to understand where each cell came
-            from. However, it will lead to warnings and errors if a cell/surface is
-            generated to use a cell/surface ID that has already been used respectively.
-            Keep this as False if you're running openmc simulations multiple times in one
-            session.
-
-        Returns
-        -------
-        CellStage
-        """
-        # determine universe_box
-
-        z_max, z_min, r_max, r_min = self._pre_cell_stage.half_bounding_box()
-
-        z_min_adj = z_min - D_TOLERANCE
-        z_max_adj = z_max + D_TOLERANCE
-        r_max_adj = r_max + D_TOLERANCE
-
-        rad_shield_wall_tk = self.tokamak_dimensions.rad_shield.wall
-
-        # make the universe box, incorporates the radiation shield wall
-        universe = make_universe_box(
-            csg,
-            z_min_adj - rad_shield_wall_tk,
-            z_max_adj + rad_shield_wall_tk,
-            r_max_adj + rad_shield_wall_tk,
-            control_id=control_id,
-        )
-
-        blanket = BlanketCellArray.from_pre_cell_array(
-            self._pre_cell_stage.blanket,
-            self.material_library,
-            self.tokamak_dimensions,
-            csg,
-            control_id=control_id,
-        )
-
-        # change the cell and surface id register before making the divertor.
-        # (ids will only count up from here.)
-        if control_id:
-            round_up_next_openmc_ids()
-
-        divertor = DivertorCellArray.from_pre_cell_array(
-            self._pre_cell_stage.divertor,
-            self.material_library,
-            self.tokamak_dimensions.divertor,
-            csg=csg,
-            override_start_end_surfaces=(blanket[0].ccw_surface, blanket[-1].cw_surface),
-            # ID cannot be controlled at this point.
-        )
-
-        # make the plasma cell and the exterior void.
-        if control_id:
-            round_up_next_openmc_ids()
-
-        cs, tf = make_coils(
-            csg,
-            r_min - self.tokamak_dimensions.cs_coil.thickness,
-            self.tokamak_dimensions.cs_coil.thickness,
-            z_min_adj,
-            z_max_adj,
-            self.material_library,
-        )
-        # make the radiation shield wall
-        # which is a hollow of the universe box
-        rad_shield = make_radiation_shield_box(
-            csg,
-            z_min_adj,
-            z_max_adj,
-            r_max_adj,
-            universe,
-            self.material_library,
-        )
-        plasma, ext_void = make_void_cells(
-            csg,
-            universe=universe,
-            blanket=blanket,
-            divertor=divertor,
-            central_solenoid=cs,
-            tf_coils=tf,
-            rad_shield=rad_shield,
-            control_id=control_id,
-        )
-
-        cell_stage = CellStage(
-            blanket=blanket,
-            divertor=divertor,
-            tf_coils=tf,
-            cs_coil=cs,
-            plasma=plasma,
-            radiation_shield=rad_shield,
-            ext_void=ext_void,
-            universe=universe,
-        )
-        cell_stage.set_volumes()
-
-        return cell_stage
 
     @property
     def bounding_box(self) -> tuple[float, ...]:
