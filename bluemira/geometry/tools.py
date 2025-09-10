@@ -2331,7 +2331,7 @@ def split_open_wire_at_coords(
     Raises
     ------
     GeometryError
-        if wire cutting goes wrong
+        if wire split operation returns no wires
     """
     segments = []
     wire_to_cut = deepcopy(wire)
@@ -2342,7 +2342,9 @@ def split_open_wire_at_coords(
         if not wire_1 or not wire_2:
             wire_to_cut = wire_1 or wire_2
             if not wire_to_cut:
-                raise GeometryError("Splitting Wire Went Wrong!")
+                raise GeometryError(
+                    "Splitting wire went wrong - Wire split operation returned no wires"
+                )
             # Cutting at start/end points, continue
         else:
             # Append the shorter wire and update wire_to_cut
