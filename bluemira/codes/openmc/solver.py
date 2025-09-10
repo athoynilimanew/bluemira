@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
 from enum import auto
@@ -28,10 +27,6 @@ from bluemira.codes.interface import (
     CodesTask,
     CodesTeardown,
 )
-from bluemira.codes.openmc.make_csg import (
-    BlanketCellArray,
-    DivertorCellArray,
-)
 from bluemira.codes.openmc.output import OpenMCResult
 from bluemira.codes.openmc.params import (
     OpenMCNeutronicsSolverParams,
@@ -40,6 +35,8 @@ from bluemira.codes.openmc.params import (
 from bluemira.plasma_physics.reactions import n_DT_reactions
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
         NeutronicsReactor,
     )
@@ -360,16 +357,6 @@ class Teardown(CodesTeardown):
             )
             for cell in self.cells
         }
-
-
-TALLY_FUNCTION_TYPE = Callable[
-    [list[openmc.Material], BlanketCellArray, DivertorCellArray],
-    tuple[
-        str,
-        str,
-        list[openmc.CellFilter | openmc.MaterialFilter | openmc.ParticleFilter],
-    ],
-]
 
 
 class OpenMCNeutronicsSolver(CodesSolver):
