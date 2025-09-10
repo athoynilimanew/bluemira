@@ -317,10 +317,8 @@ class NeutronicsReactor(ABC):
                 divertor_discretisation=divertor_discretisation,
                 snap_to_horizontal_angle=snap_to_horizontal_angle,
             )
-            return self._create_cell_stage_custom(
-                blanket_discretisation=blanket_discretisation,
-                divertor_discretisation=divertor_discretisation,
-                snap_to_horizontal_angle=snap_to_horizontal_angle,
+            return self._make_cell_arrays_custom(
+                csg=BluemiraNeutronicsCSG(),
                 control_id=True,
             )
 
@@ -529,23 +527,9 @@ class NeutronicsReactor(ABC):
         ...
 
     @abstractmethod
-    def _create_cell_stage_custom(
-        self,
-        blanket_discretisation: int,
-        divertor_discretisation: int,
-        snap_to_horizontal_angle: float,
-        *,
-        control_id: bool = False,
-    ) -> CellStage:
-        """Customised Cell making stage"""
-        ...
-
-    @abstractmethod
     def _make_cell_arrays_custom(
         self,
         csg: BluemiraNeutronicsCSG,
-        materials: MaterialsLibrary,
-        tokamak_dimensions: TokamakDimensions,
         *,
         control_id: bool = False,
     ) -> CellStage:
