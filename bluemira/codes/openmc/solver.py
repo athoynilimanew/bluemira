@@ -11,7 +11,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
 from enum import auto
-from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -166,6 +165,7 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         materials,
         bounding_box,
         half_bounding_box,
+        tallies,
     ):
         super().__init__(None, codes_name)
 
@@ -257,7 +257,6 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         runtime_params,
         eq,
         source_params,
-        tally_function,
         *,
         debug: bool = False,
     ) -> tuple[openmc.Model, SourceInfo]:
@@ -719,11 +718,15 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
         if setup := self._get_execution_method(self._setup, run_mode):
             model, config = setup(
                 run_mode,
+               
                 runtime_params,
                 self.eq,
+               
                 source_params,
-                self.tally_function,
-                debug=debug,
+               
+                self.cell_arrays.tally_func,
+               
+                debug=debug,,
             )
         if run := self._get_execution_method(self._run, run_mode):
             result = run(run_mode, model, config, debug=debug)
