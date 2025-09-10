@@ -34,12 +34,15 @@ from bluemira.geometry.constants import D_TOLERANCE
 from bluemira.geometry.plane import calculate_plane_dir
 from bluemira.geometry.tools import get_wire_plane_intersect, make_polygon
 from bluemira.radiation_transport.neutronics.make_pre_cell import PreCell
+from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 from bluemira.radiation_transport.neutronics.slicing import (
     DivertorWireAndExteriorCurve,
     PanelsAndExteriorCurve,
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from matplotlib.axes import Axes
     from numpy import typing as npt
 
@@ -50,7 +53,6 @@ if TYPE_CHECKING:
         DivertorPreCellArray,
         PreCellArray,
     )
-    from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 
 
 class GeometryType(Enum):
@@ -267,10 +269,11 @@ class NeutronicsReactor(ABC):
         params: dict | ParameterFrame,
         blanket: ComponentManager,
         vacuum_vessel: ComponentManager,
-        materials_library: NeutronicsMaterials,
+        materials_library: NeutronicsMaterials | str | Path,
         divertor: ComponentManager | None = None,
         first_wall: ComponentManager | None = None,
         panel_points: npt.NDArray | None = None,
+        material_mapping: dict | None = None,
         *,
         snap_to_horizontal_angle: float = 45,
         blanket_discretisation: int = 10,
@@ -293,9 +296,16 @@ class NeutronicsReactor(ABC):
         bluemira_print("Creating axis-symmetric neutronics model")
 
         self.params = make_parameter_frame(params, self.param_cls)
-        self.material_library = MaterialsLibrary.from_neutronics_materials(
-            materials_library
-        )
+
+        if isinstance(materials_library, NeutronicsMaterials):
+            self.material_library = MaterialsLibrary.from_neutronics_materials(
+                materials_library
+            )
+        else:
+            self.material_library = MaterialsLibrary.import_from_xml(
+                material_mapping=material_mapping, path=materials_library
+            )
+
         self.geometry_type = geometry_type
         (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
             divertor, blanket, vacuum_vessel, first_wall, panel_points
@@ -488,6 +498,16 @@ class NeutronicsReactor(ABC):
         cell_stage.set_volumes()
 
         return cell_stage
+
+    @property
+    def bounding_box(self) -> tuple[float, ...]:
+        """Bounding box of Neutronics reactor"""
+        return self._pre_cell_stage.bounding_box()
+
+    @property
+    def half_bounding_box(self) -> tuple[float, ...]:
+        """Bounding box of the right-hand half of the 2D poloidal cross-section"""
+        return self._pre_cell_stage.half_bounding_box()
 
     def plot_2d(self, *args, **kwargs) -> Axes:
         """

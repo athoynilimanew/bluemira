@@ -102,13 +102,13 @@ def run_neutronics(
         source="Neutronics",
     )
 
-    # TODO: Directly make cell arrays
     neutronics_csg = EUDEMONeutronicsCSGReactor(
         geometry_type=GeometryType.SN_INTEGRATED,
         params=csg_params,
         divertor=ivc_shapes,
         blanket=blanket,
         vacuum_vessel=vacuum_vessel,
+        materials_library=material_library,
         panel_points=blanket.panel_points.T,
     )
 
@@ -119,10 +119,9 @@ def run_neutronics(
             raise NeutronicsError("Cannot import neutronics source") from None
 
     solver = neutronics_code_solver(
-        params,
-        build_config,
-        neutronics_csg.cell_arrays,
-        material_library,
+        params=params,
+        build_config=build_config,
+        neutronics_reactor=neutronics_csg,
         source=source or make_pps_source,
         tally_function=tally_function,
     )
