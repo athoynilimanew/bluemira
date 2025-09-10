@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -92,8 +92,6 @@ class ReactorGeometry:
         interface between the inside of the vacuum vessel and the outside of the blanket
     vacuum_vessel_wire:
         The outer-boundary of the vacuum vessel
-    customised_geometry:
-        only useful in case of user-defined customised reactor
     """
 
     lower_divertor_inner_wire: BluemiraWire
@@ -101,8 +99,6 @@ class ReactorGeometry:
     panel_break_points: npt.NDArray
     vacuum_vessel_inner_wire: BluemiraWire
     vacuum_vessel_outer_wire: BluemiraWire
-    customised_geometry: Any | None = None
-    # In case the user has a tokamak of different Geometry
 
 
 @dataclass
