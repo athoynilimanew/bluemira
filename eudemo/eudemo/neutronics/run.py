@@ -110,6 +110,7 @@ def run_neutronics(
         vacuum_vessel=vacuum_vessel,
         materials_library=material_library,
         panel_points=blanket.panel_points.T,
+        tally_function=tally_function,
     )
 
     if source is None:
@@ -123,7 +124,6 @@ def run_neutronics(
         build_config=build_config,
         neutronics_reactor=neutronics_csg,
         source=source or make_pps_source,
-        tally_function=tally_function,
     )
 
     res = solver.execute()
