@@ -57,9 +57,6 @@ if TYPE_CHECKING:
         PreCell,
         PreCellArray,
     )
-    from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
-        PreCellStage,
-    )
     from bluemira.radiation_transport.neutronics.wires import (
         StraightLineInfo,
         WireInfoList,
@@ -707,115 +704,6 @@ def make_void_cells(
             name="Exterior void",
         ),
     )
-
-
-def make_cell_arrays(
-    pre_cell_stage: PreCellStage,
-    csg: BluemiraNeutronicsCSG,
-    materials: MaterialsLibrary,
-    tokamak_dimensions: TokamakDimensions,
-    *,
-    control_id: bool = False,
-) -> CellStage:
-    """Make pre-cell arrays for the blanket and the divertor.
-
-    Parameters
-    ----------
-    control_id: bool
-        Whether to set the blanket Cells and surface IDs by force or not.
-        With this set to True, it will be easier to understand where each cell came
-        from. However, it will lead to warnings and errors if a cell/surface is
-        generated to use a cell/surface ID that has already been used respectively.
-        Keep this as False if you're running openmc simulations multiple times in one
-        session.
-    """
-    # determine universe_box
-
-    z_max, z_min, r_max, r_min = pre_cell_stage.half_bounding_box()
-
-    z_min_adj = z_min - D_TOLERANCE
-    z_max_adj = z_max + D_TOLERANCE
-    r_max_adj = r_max + D_TOLERANCE
-
-    rad_shield_wall_tk = tokamak_dimensions.rad_shield.wall
-
-    # make the universe box, incorporates the radiation shield wall
-    universe = make_universe_box(
-        csg,
-        z_min_adj - rad_shield_wall_tk,
-        z_max_adj + rad_shield_wall_tk,
-        r_max_adj + rad_shield_wall_tk,
-        control_id=control_id,
-    )
-
-    blanket = BlanketCellArray.from_pre_cell_array(
-        pre_cell_stage.blanket,
-        materials,
-        tokamak_dimensions,
-        csg,
-        control_id=control_id,
-    )
-
-    # change the cell and surface id register before making the divertor.
-    # (ids will only count up from here.)
-    if control_id:
-        round_up_next_openmc_ids()
-
-    divertor = DivertorCellArray.from_pre_cell_array(
-        pre_cell_stage.divertor,
-        materials,
-        tokamak_dimensions.divertor,
-        csg=csg,
-        override_start_end_surfaces=(blanket[0].ccw_surface, blanket[-1].cw_surface),
-        # ID cannot be controlled at this point.
-    )
-
-    # make the plasma cell and the exterior void.
-    if control_id:
-        round_up_next_openmc_ids()
-
-    cs, tf = make_coils(
-        csg,
-        r_min - tokamak_dimensions.cs_coil.thickness,
-        tokamak_dimensions.cs_coil.thickness,
-        z_min_adj,
-        z_max_adj,
-        materials,
-    )
-    # make the radiation shield wall
-    # which is a hollow of the universe box
-    rad_shield = make_radiation_shield_box(
-        csg,
-        z_min_adj,
-        z_max_adj,
-        r_max_adj,
-        universe,
-        materials,
-    )
-    plasma, ext_void = make_void_cells(
-        csg,
-        universe=universe,
-        blanket=blanket,
-        divertor=divertor,
-        central_solenoid=cs,
-        tf_coils=tf,
-        rad_shield=rad_shield,
-        control_id=control_id,
-    )
-
-    cell_stage = CellStage(
-        blanket=blanket,
-        divertor=divertor,
-        tf_coils=tf,
-        cs_coil=cs,
-        plasma=plasma,
-        radiation_shield=rad_shield,
-        ext_void=ext_void,
-        universe=universe,
-    )
-    cell_stage.set_volumes()
-
-    return cell_stage
 
 
 class BluemiraNeutronicsCSG:
