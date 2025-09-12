@@ -2262,6 +2262,9 @@ class CellStage:
     ext_void: openmc.Cell
     universe: openmc.region.Intersection
 
+    bounding_box: tuple[float, float, float, float]
+    half_bounding_box: tuple[float, float, float, float]
+
     @property
     def cells(self):
         """Get the list of all cells."""
@@ -2392,6 +2395,8 @@ class CellStage:
             radiation_shield=rad_shield,
             ext_void=ext_void,
             universe=universe,
+            bounding_box=pre_cell_stage.bounding_box(),
+            half_bounding_box=pre_cell_stage.half_bounding_box(),
         )
         cell_stage.set_volumes(blanket, divertor)
 

@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import openmc
 
+from bluemira.base.look_and_feel import bluemira_warn
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -73,6 +75,8 @@ class MaterialsLibrary:
     outb_sf_mat: openmc.Material
     div_sf_mat: openmc.Material
     rad_shield: openmc.Material
+    inb_mz_mat: openmc.Material | None = None
+    outb_mz_mat: openmc.Material | None = None
 
     @classmethod
     def from_neutronics_materials(cls, materials_lib: NeutronicsMaterials):
@@ -160,7 +164,11 @@ class MaterialsLibrary:
                 (mat for mat in database if mat.name == material_name), None
             )
             if not openmc_material:
-                raise NameError(f"Material '{material_name}' not found in database.")
+                # make a Mock Material
+                bluemira_warn(
+                    f"Material '{material_name}' not found in database.. Making Mock"
+                )
+                openmc_material = openmc.Material(name="Mock")
 
             materials_dict[field.name] = openmc_material
 

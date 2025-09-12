@@ -974,7 +974,7 @@ class PreCellStage:
             self.divertor.exterior_vertices()[::-1],
         ])
 
-    def bounding_box(self) -> tuple[float, ...]:
+    def bounding_box(self) -> tuple[float, float, float, float]:
         """
         Get bounding box of pre cell stage
 
@@ -996,7 +996,7 @@ class PreCellStage:
         r_max = max(abs(all_ext_vertices[:, 0]))
         return z_max, z_min, r_max, -r_max
 
-    def half_bounding_box(self) -> tuple[float, ...]:
+    def half_bounding_box(self) -> tuple[float, float, float, float]:
         """
         Get bounding box of the 2D poloidal cross-section of the right-hand half of the
         reactor.
