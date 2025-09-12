@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import Parameter, ParameterFrame, make_parameter_frame
@@ -164,37 +164,23 @@ class NeutronicsReactor(ABC):
         (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
             divertor, blanket, vacuum_vessel, first_wall, panel_points
         )
+        self.blanket_discretisation = blanket_discretisation
+        self.divertor_discretisation = divertor_discretisation
+        self.snap_to_horizontal_angle = snap_to_horizontal_angle
 
-        self.cell_arrays = self._create_cell_stage(
-            blanket_discretisation=blanket_discretisation,
-            divertor_discretisation=divertor_discretisation,
-            snap_to_horizontal_angle=snap_to_horizontal_angle,
-            tally_function=tally_function,
-        )
+        self.cell_stage = self._create_cell_stage(tally_function=tally_function)
 
     def _create_cell_stage(
         self,
-        blanket_discretisation: int,
-        divertor_discretisation: int,
-        snap_to_horizontal_angle: float,
         tally_function: TALLY_FUNCTION_TYPE | None = None,
     ) -> CellStage:
         if self.geometry_type == GeometryType.CUSTOM:
             # User's own methods
-            self._pre_cell_stage = self._cut_and_create_pre_cell_stage_custom(
-                blanket_discretisation=blanket_discretisation,
-                divertor_discretisation=divertor_discretisation,
-                snap_to_horizontal_angle=snap_to_horizontal_angle,
-            )
-            return self._make_cell_arrays_custom(
-                csg=BluemiraNeutronicsCSG(), control_id=True
+            return self._create_cell_stage_custom(
+                tally_function=tally_function, control_id=True
             )
 
-        self._pre_cell_stage = self._cut_and_create_pre_cell_stage(
-            blanket_discretisation=blanket_discretisation,
-            divertor_discretisation=divertor_discretisation,
-            snap_to_horizontal_angle=snap_to_horizontal_angle,
-        )
+        self._pre_cell_stage = self._create_pre_cell_stage()
 
         return CellStage.from_pre_cell_stage(
             pre_cell_stage=self._pre_cell_stage,
@@ -205,9 +191,7 @@ class NeutronicsReactor(ABC):
             control_id=True,
         )
 
-    def _cut_and_create_pre_cell_stage(
-        self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
-    ) -> PreCellStage:
+    def _create_pre_cell_stage(self) -> PreCellStage:
         """
         Method to perform all intial cutting and pre-cell making
 
@@ -228,15 +212,15 @@ class NeutronicsReactor(ABC):
             ),
         )
         divertor = cutting.divertor.make_divertor_pre_cell_array(
-            discretisation_level=divertor_discretisation
+            discretisation_level=self.divertor_discretisation
         )
         first, last = divertor.exterior_vertices()[(0, -1),]
 
         blanket = cutting.blanket.make_quadrilateral_pre_cell_array(
-            discretisation_level=blanket_discretisation,
+            discretisation_level=self.blanket_discretisation,
             starting_cut=first[::2],
             ending_cut=last[::2],
-            snap_to_horizontal_angle=snap_to_horizontal_angle,
+            snap_to_horizontal_angle=self.snap_to_horizontal_angle,
         )
 
         return PreCellStage(
@@ -244,14 +228,14 @@ class NeutronicsReactor(ABC):
         )
 
     @property
-    def bounding_box(self) -> tuple[float, ...]:
+    def bounding_box(self) -> tuple[float, float, float, float]:
         """Bounding box of Neutronics reactor"""
-        return self._pre_cell_stage.bounding_box()
+        return self.cell_stage.bounding_box
 
     @property
-    def half_bounding_box(self) -> tuple[float, ...]:
+    def half_bounding_box(self) -> tuple[float, float, float, float]:
         """Bounding box of the right-hand half of the 2D poloidal cross-section"""
-        return self._pre_cell_stage.half_bounding_box()
+        return self.cell_stage.half_bounding_box
 
     def plot_2d(self, *args, **kwargs) -> Axes:
         """
@@ -284,20 +268,15 @@ class NeutronicsReactor(ABC):
         ...
 
     @abstractmethod
-    def _cut_and_create_pre_cell_stage_custom(
-        self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
-    ) -> PreCellStage:
-        """Customised Pre-cell making stage"""
-        ...
-
-    @abstractmethod
-    def _make_cell_arrays_custom(
+    def _create_cell_stage_custom(
         self,
-        csg: BluemiraNeutronicsCSG,
+        tally_function: TALLY_FUNCTION_TYPE | None = None,
         *,
         control_id: bool = False,
-    ) -> CellStage:
-        """Customised cell making stage"""
+    ) -> CellStage | Any:
+        """
+        Customised cell making stage
+        """
         ...
 
     @abstractmethod
