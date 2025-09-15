@@ -98,7 +98,6 @@ def neutronics_code_solver(
     eq: Equilibrium,
     source: NeutronSourceCreator,
     op_cond: OperationalConditions,
-    tally_function=None,
     module: str = "OPENMC",
 ) -> CodesSolver:
     """
