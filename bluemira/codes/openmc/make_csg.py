@@ -73,8 +73,8 @@ class CellStage:
 
     blanket: list[openmc.Cell]
     divertor: list[openmc.Cell]
-    tf_coils: list[openmc.Cell]
-    cs_coil: openmc.Cell
+    tf_coils: list[openmc.Cell] | None
+    cs_coil: openmc.Cell | None
     plasma: openmc.Cell
     radiation_shield: openmc.Cell
     ext_void: openmc.Cell
