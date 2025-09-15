@@ -15,8 +15,8 @@ from bluemira.codes.openmc.make_csg import BlanketCellArray, DivertorCellArray
 TALLY_FUNCTION_TYPE = Callable[
     [
         list[openmc.Material],
-        BlanketCellArray | list[openmc.Cells],
-        DivertorCellArray | list[openmc.Cells],
+        BlanketCellArray | list[openmc.Cell],
+        DivertorCellArray | list[openmc.Cell],
     ],
     tuple[
         str,
