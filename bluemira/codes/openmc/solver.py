@@ -723,7 +723,7 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
                
                 source_params,
                
-                self.cell_arrays.tally_func,
+                self.tally_func,
                
                 debug=debug,,
             )

@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Any
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import Parameter, ParameterFrame, make_parameter_frame
 from bluemira.codes.openmc.make_csg import (
-    TALLY_FUNCTION_TYPE,
     BluemiraNeutronicsCSG,
     CellStage,
 )
 from bluemira.codes.openmc.material import MaterialsLibrary
+from bluemira.codes.openmc.tallying import TALLY_FUNCTION_TYPE, filter_cells
 from bluemira.radiation_transport.neutronics.make_pre_cell import PreCellStage
 from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 from bluemira.radiation_transport.neutronics.slicing import (
@@ -32,6 +32,7 @@ from bluemira.radiation_transport.neutronics.slicing import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import openmc
     from matplotlib.axes import Axes
     from numpy import typing as npt
 
@@ -92,6 +93,35 @@ class CuttingStage:
 
     blanket: PanelsAndExteriorCurve
     divertor: DivertorWireAndExteriorCurve
+
+    def create_pre_cell_stage(
+        self,
+        snap_to_horizontal_angle: float = 45,
+        blanket_discretisation: int = 10,
+        divertor_discretisation: int = 5,
+    ) -> PreCellStage:
+        """
+        Create PreCellStage
+
+        Returns
+        -------
+        PreCellStage
+        """
+        divertor = self.divertor.make_divertor_pre_cell_array(
+            discretisation_level=divertor_discretisation
+        )
+        first, last = divertor.exterior_vertices()[(0, -1),]
+
+        blanket = self.blanket.make_quadrilateral_pre_cell_array(
+            discretisation_level=blanket_discretisation,
+            starting_cut=first[::2],
+            ending_cut=last[::2],
+            snap_to_horizontal_angle=snap_to_horizontal_angle,
+        )
+
+        return PreCellStage(
+            blanket=blanket.straighten_exterior(preserve_volume=True), divertor=divertor
+        )
 
 
 @dataclass
@@ -167,38 +197,24 @@ class NeutronicsReactor(ABC):
         self.blanket_discretisation = blanket_discretisation
         self.divertor_discretisation = divertor_discretisation
         self.snap_to_horizontal_angle = snap_to_horizontal_angle
+        self.tally_func = filter_cells if tally_function is None else tally_function
 
-        self.cell_stage = self._create_cell_stage(tally_function=tally_function)
-
-    def _create_cell_stage(
-        self,
-        tally_function: TALLY_FUNCTION_TYPE | None = None,
-    ) -> CellStage:
         if self.geometry_type == GeometryType.CUSTOM:
-            # User's own methods
-            return self._create_cell_stage_custom(
-                tally_function=tally_function, control_id=True
-            )
+            self.cell_stage = self._create_cell_stage_custom()
+        else:
+            self.cell_stage = self._create_cell_stage_default()
 
-        self._pre_cell_stage = self._create_pre_cell_stage()
+        self.list_of_tallies = self._set_list_of_tallies()
 
-        return CellStage.from_pre_cell_stage(
-            pre_cell_stage=self._pre_cell_stage,
-            tokamak_dimensions=self.tokamak_dimensions,
-            material_library=self.material_library,
-            csg=BluemiraNeutronicsCSG(),
-            tally_function=tally_function,
-            control_id=True,
-        )
-
-    def _create_pre_cell_stage(self) -> PreCellStage:
+    def _create_cell_stage_default(self) -> CellStage:
         """
-        Method to perform all intial cutting and pre-cell making
+        Cut and create Precells, converts into cell stage and set Tallies
 
         Returns
         -------
-        PreCellStage
+        CellStage
         """
+        # Cutting and Pre-cell Stage making
         cutting = CuttingStage(
             blanket=PanelsAndExteriorCurve(
                 self.geom.panel_break_points,
@@ -211,49 +227,20 @@ class NeutronicsReactor(ABC):
                 self.geom.vacuum_vessel_outer_wire,
             ),
         )
-        divertor = cutting.divertor.make_divertor_pre_cell_array(
-            discretisation_level=self.divertor_discretisation
-        )
-        first, last = divertor.exterior_vertices()[(0, -1),]
 
-        blanket = cutting.blanket.make_quadrilateral_pre_cell_array(
-            discretisation_level=self.blanket_discretisation,
-            starting_cut=first[::2],
-            ending_cut=last[::2],
+        self.pre_cell_stage = cutting.create_pre_cell_stage(
+            blanket_discretisation=self.blanket_discretisation,
+            divertor_discretisation=self.divertor_discretisation,
             snap_to_horizontal_angle=self.snap_to_horizontal_angle,
         )
 
-        return PreCellStage(
-            blanket=blanket.straighten_exterior(preserve_volume=True), divertor=divertor
+        return CellStage.from_pre_cell_stage(
+            pre_cell_stage=self.pre_cell_stage,
+            tokamak_dimensions=self.tokamak_dimensions,
+            material_library=self.material_library,
+            csg=BluemiraNeutronicsCSG(),
+            control_id=True,
         )
-
-    @property
-    def bounding_box(self) -> tuple[float, float, float, float]:
-        """Bounding box of Neutronics reactor"""
-        return self.cell_stage.bounding_box
-
-    @property
-    def half_bounding_box(self) -> tuple[float, float, float, float]:
-        """Bounding box of the right-hand half of the 2D poloidal cross-section"""
-        return self.cell_stage.half_bounding_box
-
-    def plot_2d(self, *args, **kwargs) -> Axes:
-        """
-        Plot neutronics reactor 2d profile
-
-        Returns
-        -------
-        :
-            Axes on which the reactor is plotted.
-        """
-        if self.geometry_type == GeometryType.CUSTOM:
-            # User's own method
-            return self.plot_2d_custom(*args, **kwargs)
-
-        show = kwargs.pop("show", True)
-        ax = kwargs.pop("ax", None)
-        ax = self._pre_cell_stage.blanket.plot_2d(*args, ax=ax, show=False, **kwargs)
-        return self._pre_cell_stage.divertor.plot_2d(*args, ax=ax, show=show, **kwargs)
 
     @abstractmethod
     def _get_wires_from_components(
@@ -268,20 +255,24 @@ class NeutronicsReactor(ABC):
         ...
 
     @abstractmethod
-    def _create_cell_stage_custom(
-        self,
-        tally_function: TALLY_FUNCTION_TYPE | None = None,
-        *,
-        control_id: bool = False,
-    ) -> CellStage | Any:
+    def _create_cell_stage_custom(self) -> CellStage | Any:
         """
         Customised cell making stage
         """
         ...
 
     @abstractmethod
-    def plot_2d_custom(self, *args, **kwargs) -> Axes:
+    def _set_list_of_tallies(self) -> list[openmc.Tally] | None:
+        """Set list of tallies"""
+
+    @abstractmethod
+    def plot_2d(self, *args, **kwargs) -> Axes:
         """
-        Plot neutronics reactor 2d profile, customised
+        Plot neutronics reactor 2d profile
+
+        Returns
+        -------
+        :
+            Axes on which the reactor is plotted.
         """
         ...

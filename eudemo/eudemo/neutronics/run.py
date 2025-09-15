@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from matproplib.conditions import OperationalConditions
     from collections.abc import Callable
 
-    import openmc.source
+    from matplotlib.axes import Axes
     from numpy import typing as npt
 
     from bluemira.base.parameter_frame import ParameterFrame
