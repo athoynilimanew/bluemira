@@ -384,12 +384,13 @@ class OpenMCNeutronicsSolver(CodesSolver):
 
         self.source = source
 
-        self._bounding_box = neutronics_reactor.bounding_box
-        self._half_bounding_box = neutronics_reactor.half_bounding_box
+        self._bounding_box = neutronics_reactor.cell_stage.bounding_box
+        self._half_bounding_box = neutronics_reactor.cell_stage.half_bounding_box
 
-        self.cell_arrays = neutronics_reactor.cell_arrays
+        self.cell_stage = neutronics_reactor.cell_stage
         self.materials = neutronics_reactor.material_library
-        self.tallies = self.cell_arrays.list_of_tallies
+        self.tally_func = neutronics_reactor.tally_func
+        self.tallies = neutronics_reactor.list_of_tallies
 
     @property
     def source(self) -> Callable[[PlasmaSourceParameters], openmc.Source]:
@@ -433,7 +434,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
             self.name,
             str(self.build_config["cross_section_xml"]),
             self.source,
-            self.cell_arrays,
+            self.cell_stage,
             self.materials,
             self._bounding_box,
             self._half_bounding_box,
@@ -441,7 +442,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
         )
         self._run = self.run_cls(self.out_path, self.name)
         self._teardown = self.teardown_cls(
-            self.cell_arrays.cells, self.out_path, self.name
+            self.cell_stage.cells, self.out_path, self.name
         )
 
         result = None
@@ -450,7 +451,7 @@ class OpenMCNeutronicsSolver(CodesSolver):
                 run_mode,
                 runtime_params,
                 source_params,
-                self.cell_arrays.tally_func,
+                self.tally_func,
                 debug=debug,
             )
         if run := self._get_execution_method(self._run, run_mode):

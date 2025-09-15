@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
+from operator import attrgetter
 from typing import TYPE_CHECKING
+
+import openmc
+import openmc.source
 
 from bluemira.codes.wrapper import neutronics_code_solver
 from bluemira.radiation_transport.error import NeutronicsError
@@ -26,7 +30,7 @@ from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import openmc.source
+    from matplotlib.axes import Axes
     from numpy import typing as npt
 
     from bluemira.base.parameter_frame import ParameterFrame
@@ -57,6 +61,54 @@ class EUDEMONeutronicsCSGReactor(NeutronicsReactor):
                 vacuum_vessel_outer_wire=vacuum_vessel.xz_boundary,
             ),
         )
+
+    def _set_list_of_tallies(self) -> list[openmc.Tally]:
+        """
+        Set list of tallies
+
+        Returns
+        -------
+        list[openmc.Tally]
+        """
+        blanket_cell_array = self.cell_stage.blanket_cell_array
+        divertor_cell_array = self.cell_stage.divertor_cell_array
+
+        matlist = attrgetter(
+            "outb_sf_mat",
+            "outb_fw_mat",
+            "outb_bz_mat",
+            "outb_mani_mat",
+            "outb_vv_mat",
+            "divertor_mat",
+            "div_fw_mat",
+            "tf_coil_mat",
+        )
+        material_list = matlist(self.material_library)
+
+        tallies_list: list[openmc.Tally] = []
+        for name, scores, filters in self.tally_func(
+            material_list, blanket_cell_array, divertor_cell_array
+        ):
+            tally = openmc.Tally(name=name)
+            tally.scores = [scores] if isinstance(scores, str) else scores
+            tally.filters = filters
+            tallies_list.append(tally)
+
+        return tallies_list
+
+    def plot_2d(self, *args, **kwargs) -> Axes:
+        """
+        Plot neutronics reactor 2d profile
+
+        Returns
+        -------
+        :
+            Axes on which the reactor is plotted.
+        """
+        show = kwargs.pop("show", True)
+        ax = kwargs.pop("ax", None)
+        ax = self.pre_cell_stage.blanket.plot_2d(*args, ax=ax, show=False, **kwargs)
+        return self.pre_cell_stage.divertor.plot_2d(*args, ax=ax, show=show, **kwargs)
 
 
 def run_neutronics(
