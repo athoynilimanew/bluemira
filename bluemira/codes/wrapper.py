@@ -115,7 +115,6 @@ def neutronics_code_solver(
     build_config: BuildConfig,
     neutronics_model,
     source,
-    tally_function=None,
     module: str = "OPENMC",
 ) -> CodesSolver:
     """
@@ -136,4 +135,4 @@ def neutronics_code_solver(
         The solver object to be run
     """
     neutron = get_code_interface(module)
-    return neutron.Solver(params, build_config, neutronics_model, source, tally_function)
+    return neutron.Solver(params, build_config, neutronics_model, source)
