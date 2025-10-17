@@ -179,11 +179,16 @@ class MaterialsLibrary:
                 (mat for mat in database if mat.name == material_name), None
             )
             if not openmc_material:
-                # make a Mock Material
+                # for now,
+                # make a vaccum mat
+                # but raise warning
                 bluemira_warn(
-                    f"Material '{material_name}' not found in database.. Making Mock"
+                    f"Material '{material_name}' not found in database.. Making"
+                    " a vacuum vessel material"
                 )
-                openmc_material = openmc.Material(name="Mock")
+                openmc_material = next(  # your database must have the below
+                    (mat for mat in database if mat.name == "mock_hydrogen"), None
+                )
 
             materials_dict[field.name] = openmc_material
 
