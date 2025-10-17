@@ -191,12 +191,14 @@ class NeutronicsReactor(ABC):
             )
 
         self.geometry_type = geometry_type
-        (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
-            divertor, blanket, vacuum_vessel, first_wall, panel_points
-        )
         self.blanket_discretisation = blanket_discretisation
         self.divertor_discretisation = divertor_discretisation
         self.snap_to_horizontal_angle = snap_to_horizontal_angle
+
+        (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
+            divertor, blanket, vacuum_vessel, first_wall, panel_points
+        )
+
         self.tally_func = filter_cells if tally_function is None else tally_function
 
         if self.geometry_type == GeometryType.CUSTOM:
