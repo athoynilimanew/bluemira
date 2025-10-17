@@ -71,8 +71,6 @@ SHRINK_DISTANCE = 0.0005  # [m] = 0.05cm = 0.5 mm
 class CellStage:
     """Stage of making cells."""
 
-    blanket: list[openmc.Cell]
-    divertor: list[openmc.Cell]
     tf_coils: list[openmc.Cell] | None
     cs_coil: openmc.Cell | None
     plasma: openmc.Cell
@@ -82,16 +80,42 @@ class CellStage:
 
     bounding_box: tuple[float, float, float, float]
     half_bounding_box: tuple[float, float, float, float]
-    blanket_cell_array: BlanketCellArray | None = None  # only for default case
-    divertor_cell_array: DivertorCellArray | None = None  # only for default case
+    custom_cells_all: list[openmc.Cell] | None = None
+    blanket: BlanketCellArray | None = None  # only for default case
+    divertor: DivertorCellArray | None = None  # only for default case
 
     @property
     def cells(self):
-        """Get the list of all cells."""
+        """
+        Get the list of all cells
+
+        Raises
+        ------
+        ValueError
+            if blanket, divertor, custom cells none are not provided,
+            or
+            if blanket, divertor cells are provided but not TF and CS coils
+        """
+        if self.blanket and self.divertor:
+            if not self.tf_coils or not self.cs_coil:
+                raise ValueError("TF and CS coil cells are not found.")
+            # Default
+            return (
+                *chain.from_iterable((*self.blanket, *self.divertor)),
+                *self.tf_coils,
+                self.cs_coil,
+                self.plasma,
+                self.radiation_shield,
+                self.ext_void,
+            )
+
+        # custom
+        if not self.custom_cells_all:
+            raise ValueError(
+                "Neither blanket/divertor cell arrays nor custom cell arrays were found"
+            )
         return (
-            *chain.from_iterable((*self.blanket, *self.divertor)),
-            *self.tf_coils,
-            self.cs_coil,
+            *self.custom_cells_all,
             self.plasma,
             self.radiation_shield,
             self.ext_void,
@@ -206,8 +230,8 @@ class CellStage:
         )
 
         cell_stage = cls(
-            blanket=blanket.get_hollow_merged_cells(),
-            divertor=divertor.get_hollow_merged_cells(),
+            blanket=blanket,
+            divertor=divertor,
             tf_coils=tf,
             cs_coil=cs,
             plasma=plasma,
@@ -216,9 +240,8 @@ class CellStage:
             universe=universe,
             bounding_box=pre_cell_stage.bounding_box(),
             half_bounding_box=pre_cell_stage.half_bounding_box(),
-            blanket_cell_array=blanket,
-            divertor_cell_array=divertor,
         )
+
         cell_stage.set_volumes(blanket, divertor)
 
         return cell_stage
@@ -499,7 +522,9 @@ def choose_plane_cylinders(
     if all(values <= threshold):
         return -surface
 
-    raise GeometryError(f"There are points on both sides of this {type(surface)}!")
+    raise GeometryError(
+        f"There are points on both sides of this {type(surface)}!{choice_points}"
+    )
 
 
 # simplfying openmc.Intersection by associativity
