@@ -724,6 +724,7 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
                 source_params,
                
                
+                self.tally_func,
                 debug=debug,,
             )
         if run := self._get_execution_method(self._run, run_mode):
