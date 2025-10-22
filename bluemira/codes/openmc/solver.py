@@ -256,6 +256,7 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         runtime_params,
         eq,
         source_params,
+        _tally_function,
         *,
         debug: bool = False,
     ) -> tuple[openmc.Model, SourceInfo]:

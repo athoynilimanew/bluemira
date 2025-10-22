@@ -114,8 +114,17 @@ class CellStage:
             raise ValueError(
                 "Neither blanket/divertor cell arrays nor custom cell arrays were found"
             )
+        if not self.tf_coils or not self.cs_coil:
+            return (
+                *self.custom_cells_all,
+                self.plasma,
+                self.radiation_shield,
+                self.ext_void,
+            )
         return (
             *self.custom_cells_all,
+            *self.tf_coils,
+            self.cs_coil,
             self.plasma,
             self.radiation_shield,
             self.ext_void,
