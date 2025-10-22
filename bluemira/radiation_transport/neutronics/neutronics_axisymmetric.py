@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import Parameter, ParameterFrame, make_parameter_frame
@@ -22,6 +21,7 @@ from bluemira.codes.openmc.make_csg import (
 )
 from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.codes.openmc.tallying import TALLY_FUNCTION_TYPE, filter_cells
+from bluemira.radiation_transport.neutronics.geometry import GeometryType
 from bluemira.radiation_transport.neutronics.make_pre_cell import PreCellStage
 from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 from bluemira.radiation_transport.neutronics.slicing import (
@@ -39,26 +39,6 @@ if TYPE_CHECKING:
     from bluemira.base.reactor import ComponentManager
     from bluemira.geometry.wire import BluemiraWire
     from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
-
-
-class GeometryType(Enum):
-    """Enumeration of geometry types."""
-
-    # Single-null geometry with integrated FW & blanket, plus divertor and vessel
-    SN_INTEGRATED = auto()
-
-    # Other
-    CUSTOM = auto()
-
-    @classmethod
-    def _missing_(cls, value: str):
-        try:
-            return cls[value.upper()]
-        except KeyError:
-            raise ValueError(
-                f"{cls.__name__} has no type {value}"
-                f"please select from {(*cls._member_names_,)}"
-            ) from None
 
 
 @dataclass
@@ -257,7 +237,7 @@ class NeutronicsReactor(ABC):
         ...
 
     @abstractmethod
-    def _create_cell_stage_custom(self) -> CellStage | Any:
+    def _create_cell_stage_custom(self) -> CellStage:
         """
         Customised cell making stage
         """

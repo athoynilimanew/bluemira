@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     )
 
 
+from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+
 @dataclass
 class BlanketThickness:
     """
@@ -173,3 +177,23 @@ class TokamakDimensions:
             ToroidalFieldCoilDimension(params.tk_tf_inboard.value, params.r_tf_in.value),
             RadiationShieldThickness(params.tk_rs.value),
         )
+
+
+class GeometryType(Enum):
+    """Enumeration of geometry types."""
+
+    # Single-null geometry with integrated FW & blanket, plus divertor and vessel
+    SN_INTEGRATED = auto()
+
+    # Other
+    CUSTOM = auto()
+
+    @classmethod
+    def _missing_(cls, value: str):
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(
+                f"{cls.__name__} has no type {value}"
+                f"please select from {(*cls._member_names_,)}"
+            ) from None
