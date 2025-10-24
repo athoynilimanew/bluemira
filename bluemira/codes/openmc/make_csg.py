@@ -73,8 +73,6 @@ class CellStage:
 
     tf_coils: list[openmc.Cell] | None
     cs_coil: openmc.Cell | None
-    plasma: openmc.Cell
-    radiation_shield: openmc.Cell
     ext_void: openmc.Cell
     universe: openmc.region.Intersection
 
@@ -104,8 +102,6 @@ class CellStage:
                 *chain.from_iterable((*self.blanket, *self.divertor)),
                 *self.tf_coils,
                 self.cs_coil,
-                self.plasma,
-                self.radiation_shield,
                 self.ext_void,
             )
 
@@ -117,16 +113,12 @@ class CellStage:
         if not self.tf_coils or not self.cs_coil:
             return (
                 *self.custom_cells_all,
-                self.plasma,
-                self.radiation_shield,
                 self.ext_void,
             )
         return (
             *self.custom_cells_all,
             *self.tf_coils,
             self.cs_coil,
-            self.plasma,
-            self.radiation_shield,
             self.ext_void,
         )
 
@@ -261,7 +253,6 @@ class CellStage:
         """
         Sets the volume of the voids. Not necessary/ used anywhere yet.
         """
-        ext_vertices = exterior_vertices(self.blanket, self.divertor)
         total_universe_volume = (
             #  top - bottom
             (self.universe[0].surface.z0 - self.universe[1].surface.z0)
@@ -272,21 +263,19 @@ class CellStage:
         # is this needed?
         # self.universe.volume = total_universe_volume
 
-        outer_boundary_volume = to_cm3(
-            polygon_revolve_signed_volume(ext_vertices[:, ::2].T)
-        )
-        ext_void_volume = total_universe_volume - outer_boundary_volume
+        self.ext_void.volume = total_universe_volume
         if self.tf_coils:
             for coil in self.tf_coils:
-                ext_void_volume -= coil.volume
+                self.ext_void.volume -= coil.volume
         if self.cs_coil:
-            ext_void_volume -= self.cs_coil.volume
-        self.ext_void.volume = ext_void_volume
-        blanket_volumes = sum(cell.volume for cell in chain.from_iterable(blanket_array))
-        divertor_volumes = sum(
+            self.ext_void.volume -= self.cs_coil.volume
+        self.ext_void.volume -= sum(
+            cell.volume for cell in chain.from_iterable(blanket_array)
+        )
+        self.ext_void.volume -= sum(
             cell.volume for cell in chain.from_iterable(divertor_array)
         )
-        self.plasma.volume = outer_boundary_volume - blanket_volumes - divertor_volumes
+        self.ext_void.volume = total_universe_volume
 
 
 def is_monotonically_increasing(series):
