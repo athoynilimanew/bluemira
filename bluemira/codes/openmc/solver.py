@@ -693,6 +693,7 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
             run_mode = self.run_mode_cls.from_string(run_mode)
 
         source_params = PlasmaSourceParameters.from_parameterframe(self.params)
+
         runtime_params = OpenMCSimulationRuntimeParameters(**{
             k.name: self.build_config[k.name]
             for k in fields(OpenMCSimulationRuntimeParameters)
