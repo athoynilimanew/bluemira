@@ -656,7 +656,6 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
         params: dict | ParameterFrame,
         build_config: dict,
         eq: Equilibrium,
-        material_library: MaterialsLibrary,
         source: NeutronSourceCreator,
     ):
         self.params = make_parameter_frame(params, self.param_cls)
