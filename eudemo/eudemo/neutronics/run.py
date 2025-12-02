@@ -34,17 +34,11 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     from matplotlib.axes import Axes
     from matproplib.conditions import OperationalConditions
-    from collections.abc import Callable
-
-    from matplotlib.axes import Axes
-    from numpy import typing as npt
 
     from bluemira.base.parameter_frame import ParameterFrame
     from bluemira.base.reactor import ComponentManager
     from bluemira.codes.openmc.solver import NeutronSourceCreator
     from bluemira.equilibria.equilibrium import Equilibrium
-    from bluemira.geometry.wire import BluemiraWire
-    from bluemira.codes.openmc.params import PlasmaSourceParameters
     from eudemo.blanket import Blanket
     from eudemo.ivc import IVCShapes
     from eudemo.vacuum_vessel import VacuumVessel
@@ -133,20 +127,15 @@ def run_csg_neutronics(
 
     neutronics_csg = EUDEMONeutronicsCSGReactor(
         geometry_type=GeometryType.SN_INTEGRATED,
-        params=csg_params,
-        divertor=ivc_shapes,
+        params=params,
         blanket=blanket,
         vacuum_vessel=vacuum_vessel,
         materials_library=material_library,
+        op_cond=op_cond,
+        divertor=ivc_shapes,
         panel_points=blanket.panel_points.T,
         tally_function=tally_function,
     )
-
-    if source is None:
-        try:
-            from bluemira.codes.openmc.sources import make_pps_source  # noqa: PLC0415
-        except ImportError:
-            raise NeutronicsError("Cannot import neutronics source") from None
 
     solver = neutronics_code_solver(
         params,

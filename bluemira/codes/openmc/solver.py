@@ -256,7 +256,6 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         runtime_params,
         eq,
         source_params,
-        _tally_function,
         *,
         debug: bool = False,
     ) -> tuple[openmc.Model, SourceInfo]:
@@ -550,7 +549,6 @@ class OpenMCCSGTeardown(CodesTeardown):
 
     def __init__(
         self,
-        cell_arrays: CellStage,
         pre_cell_model: NeutronicsReactor,
         out_path: str,
         codes_name: str,

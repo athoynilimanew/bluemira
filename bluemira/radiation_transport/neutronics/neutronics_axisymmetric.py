@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
     import openmc
     from matplotlib.axes import Axes
+    from matproplib.conditions import OperationalConditions
     from numpy import typing as npt
 
     from bluemira.base.reactor import ComponentManager
@@ -133,6 +134,7 @@ class NeutronicsReactor(ABC):
         blanket: ComponentManager,
         vacuum_vessel: ComponentManager,
         materials_library: NeutronicsMaterials | str | Path,
+        op_cond: OperationalConditions,
         divertor: ComponentManager | None = None,
         first_wall: ComponentManager | None = None,
         panel_points: npt.NDArray | None = None,
@@ -163,7 +165,7 @@ class NeutronicsReactor(ABC):
 
         if isinstance(materials_library, NeutronicsMaterials):
             self.material_library = MaterialsLibrary.from_neutronics_materials(
-                materials_library
+                materials_library, op_cond
             )
         else:
             self.material_library = MaterialsLibrary.import_from_xml(
