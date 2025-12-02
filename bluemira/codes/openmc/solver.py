@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from matproplib.conditions import OperationalConditions
 
     from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
+        CellStage,
         NeutronicsReactor,
     )
 
@@ -549,7 +550,7 @@ class OpenMCCSGTeardown(CodesTeardown):
 
     def __init__(
         self,
-        pre_cell_model: NeutronicsReactor,
+        cell_stage: CellStage,
         out_path: str,
         codes_name: str,
     ):
