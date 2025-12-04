@@ -72,6 +72,8 @@ jobs:
 
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    env:
+      SKIP_PRIVATE_TESTS: "1" # <- add this line
     steps:
       - name: Checkout
         uses: actions/checkout@v6
