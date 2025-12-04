@@ -1672,9 +1672,9 @@ class BlanketCellArray:
         Returns all of the tokamak's poloidal cross-section's inside corners'
         coordinates, in 3D.
 
-        Parameters
-        ----------
-        interior_vertices:
+        Returns
+        -------
+        interior_vertices: npt.NDArray
             array of shape (N+1, 3) arranged clockwise (inboard to outboard).
         """
         return np.asarray([
@@ -2272,8 +2272,8 @@ class DivertorCellArray:
         Returns all of the tokamak's poloidal cross-section's inside corners'
         coordinates, in 3D.
 
-        Parameters
-        ----------
+        Returns
+        -------
         interior_vertices: npt.NDArray of shape (N+1, 3)
             Arranged counter-clockwise (inboard to outboard).
         """
