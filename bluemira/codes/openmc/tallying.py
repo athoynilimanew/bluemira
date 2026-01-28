@@ -5,16 +5,31 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """Functions for creating the openmc tallies."""
 
+from collections.abc import Callable
 from itertools import chain
 
 import openmc
 
-from bluemira.codes.openmc.make_csg import CellStage
+from bluemira.codes.openmc.make_csg import BlanketCellArray, DivertorCellArray
+
+TALLY_FUNCTION_TYPE = Callable[
+    [
+        list[openmc.Material],
+        BlanketCellArray | list[openmc.Cell],
+        DivertorCellArray | list[openmc.Cell],
+    ],
+    tuple[
+        str,
+        str,
+        list[openmc.CellFilter | openmc.MaterialFilter | openmc.ParticleFilter],
+    ],
+]
 
 
-def csg_filter_cells(
+def filter_cells(
     material_list,
-    csg_model: CellStage,
+    blanket_cell_array: BlanketCellArray,
+    divertor_cell_array: DivertorCellArray,
 ):
     """
     Create scores and the filter for the scores. Give them names.
@@ -41,13 +56,9 @@ def csg_filter_cells(
         Divide by area to get fluence in unit: cm^-2.
 
     """
-    blanket_cell_array, divertor_cell_array = csg_model.blanket, csg_model.divertor
-    blanket_excl_vv = [
-        *chain.from_iterable([stack[:-1] for stack in blanket_cell_array])
-    ]
-    div_excl_vv = [*chain.from_iterable([stack[:-1] for stack in divertor_cell_array])]
-    cells = list(csg_model.cells[:-1])  # exclude the external void
-    cells.pop(-2)  # plasma void also should be excluded.
+    blanket_cells = [*chain.from_iterable(blanket_cell_array)]
+    div_cells = [*chain.from_iterable(divertor_cell_array)]
+    cells = blanket_cells + div_cells
     fw_surf_cells = [
         *(stack[0] for stack in blanket_cell_array),
         *(stack[1] for stack in blanket_cell_array),
@@ -56,22 +67,19 @@ def csg_filter_cells(
         *(stack[-1] for stack in blanket_cell_array),
         *(stack[-1] for stack in divertor_cell_array),
     ]
-    pfs_cells = [stack[0] for stack in blanket_cell_array] + [
-        stack[0] for stack in divertor_cell_array
-    ]
     # bz_cells = [stack[2] for stack in blanket_cell_array]
 
     # Cell filters
-    blanket_cell_filter = openmc.CellFilter(blanket_excl_vv)
-    pfs_cells_filter = openmc.CellFilter(pfs_cells)
-    div_cell_filter = openmc.CellFilter(div_excl_vv)
+    blanket_cell_filter = openmc.CellFilter(blanket_cells)
+    div_cell_filter = openmc.CellFilter(div_cells)
     cell_filter = openmc.CellFilter(cells)
     fw_surf_filter = openmc.CellFilter(fw_surf_cells)
     vv_filter = openmc.CellFilter(vv_cells)
     # bz_filter = openmc.CellFilter(bz_cells)
 
     # material filters
-    mat_filter = openmc.MaterialFilter(material_list)
+    mat_filter = openmc.MaterialFilter(material_list[:-1])
+    eurofer_filter = openmc.MaterialFilter([material_list[-1]])
     neutron_filter = openmc.ParticleFilter(["neutron"])
     photon_filter = openmc.ParticleFilter(["photon"])
 
@@ -79,39 +87,18 @@ def csg_filter_cells(
     return (
         ("TBR", "(n,Xt)", []),  # theoretical maximum TBR only, obviously.
         # Powers
-        ("total power", "heating", [mat_filter, cell_filter]),
+        ("Total power", "heating", [mat_filter]),
         ("divertor power", "heating", [div_cell_filter]),
         ("vacuum vessel power", "heating", [vv_filter]),
         ("breeding blanket power", "heating", [blanket_cell_filter]),
         # Fluence
         ("neutron flux in every cell", "flux", [cell_filter, neutron_filter]),
-        ("neutron flux at PFS", "flux", [pfs_cells_filter]),
-        ("volumetric heating at PFS", "heating", [pfs_cells_filter]),
         ("photon heating", "heating", [fw_surf_filter, photon_filter]),
         # ("neutron flux in 2d mesh", "flux", [cyl_mesh_filter, neutron_filter]),
         # TF winding pack does not exits yet, so this will have to wait
         # DPA
-        ("damage", "damage-energy", [cell_filter]),
+        ("eurofer damage", "damage-energy", [cell_filter, eurofer_filter]),
         # used to get the EUROFER OBMP
+        ("divertor damage", "damage-energy", [div_cell_filter, mat_filter]),
+        ("vacuum vessel damage", "damage-energy", [vv_filter]),
     )
-
-
-def dagmc_tallys(
-    material_list,
-    model: openmc.Geometry,
-    mesh_shape: tuple[float, ...] = (100, 100, 100),
-):
-    """DAGMC default mesh tallys"""  # noqa: DOC201
-    # mesh that covers the geometry
-    mesh = openmc.RegularMesh.from_domain(model, dimension=mesh_shape)
-    mesh_filter = openmc.MeshFilter(mesh)
-
-    mat_filter = openmc.MaterialFilter(material_list)  # noqa: F841
-
-    return [
-        ("heating", "heating", None),
-        ("heating_on_mesh", "heating", [mesh_filter]),
-        ("TBR", "(n,Xt)", None),
-        ("tbr_on_mesh", "(n,Xt)", [mesh_filter]),
-        ("flux_on_mesh", "flux", [mesh_filter]),
-    ]

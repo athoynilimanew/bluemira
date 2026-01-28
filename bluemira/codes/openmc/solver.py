@@ -11,7 +11,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
 from enum import auto
-from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -29,11 +28,7 @@ from bluemira.codes.interface import (
     CodesTeardown,
 )
 from bluemira.codes.openmc.make_csg import (
-    BluemiraNeutronicsCSG,
-    CellStage,
-    make_cell_arrays,
 )
-from bluemira.codes.openmc.material import MaterialsLibrary
 from bluemira.codes.openmc.output import (
     NeutronicsOutputParams,
     OpenMCCSGResult,
@@ -54,6 +49,7 @@ if TYPE_CHECKING:
     from matproplib.conditions import OperationalConditions
 
     from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
+        CellStage,
         NeutronicsReactor,
     )
 
@@ -167,6 +163,9 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         eq: Equilibrium,
         source,
         materials,
+        bounding_box,
+        half_bounding_box,
+        tallies,
     ):
         super().__init__(None, codes_name)
 
@@ -258,7 +257,6 @@ class OpenMCBaseSetup(CodesSetup, ABC):
         runtime_params,
         eq,
         source_params,
-        tally_function,
         *,
         debug: bool = False,
     ) -> tuple[openmc.Model, SourceInfo]:
@@ -552,8 +550,7 @@ class OpenMCCSGTeardown(CodesTeardown):
 
     def __init__(
         self,
-        cell_arrays: CellStage,
-        pre_cell_model: NeutronicsReactor,
+        cell_stage: CellStage,
         out_path: str,
         codes_name: str,
     ):
@@ -694,6 +691,7 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
             run_mode = self.run_mode_cls.from_string(run_mode)
 
         source_params = PlasmaSourceParameters.from_parameterframe(self.params)
+
         runtime_params = OpenMCSimulationRuntimeParameters(**{
             k.name: self.build_config[k.name]
             for k in fields(OpenMCSimulationRuntimeParameters)
@@ -719,11 +717,15 @@ class OpenMCNeutronicsSolver(CodesSolver, ABC):
         if setup := self._get_execution_method(self._setup, run_mode):
             model, config = setup(
                 run_mode,
+               
                 runtime_params,
                 self.eq,
+               
                 source_params,
-                self.tally_function,
-                debug=debug,
+               
+               
+                self.tally_func,
+                debug=debug,,
             )
         if run := self._get_execution_method(self._run, run_mode):
             result = run(run_mode, model, config, debug=debug)

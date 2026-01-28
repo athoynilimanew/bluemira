@@ -25,7 +25,9 @@ from bluemira.radiation_transport.neutronics.blanket_data import (
 )
 from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
 from bluemira.radiation_transport.neutronics.neutronics_axisymmetric import (
+    GeometryType,
     NeutronicsReactor,
+    ReactorGeometry,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +39,6 @@ if TYPE_CHECKING:
     from bluemira.base.reactor import ComponentManager
     from bluemira.codes.openmc.solver import NeutronSourceCreator
     from bluemira.equilibria.equilibrium import Equilibrium
-    from bluemira.geometry.wire import BluemiraWire
     from eudemo.blanket import Blanket
     from eudemo.ivc import IVCShapes
     from eudemo.vacuum_vessel import VacuumVessel
@@ -51,13 +52,16 @@ class EUDEMONeutronicsCSGReactor(NeutronicsReactor):
         ivc_shapes: IVCShapes,
         blanket: Blanket,
         vacuum_vessel: VacuumVessel,
-    ) -> tuple[TokamakDimensions, BluemiraWire, npt.NDArray, BluemiraWire, BluemiraWire]:
+        panel_points: npt.NDArray,
+    ) -> tuple[TokamakDimensions, ReactorGeometry]:
         return (
             TokamakDimensions.from_parameterframe(self.params, blanket.r_inner_cut),
-            ivc_shapes.div_internal_boundary,
-            blanket.panel_points.T,
-            ivc_shapes.outer_boundary,
-            vacuum_vessel.xz_boundary,
+            ReactorGeometry(
+                divertor_wires=(ivc_shapes.div_internal_boundary, None),
+                panel_break_points=panel_points,
+                vacuum_vessel_inner_wire=ivc_shapes.outer_boundary,
+                vacuum_vessel_outer_wire=vacuum_vessel.xz_boundary,
+            ),
         )
 
 
@@ -120,15 +124,25 @@ def run_csg_neutronics(
         },
         source="CSG Neutronics",
     )
+
     neutronics_csg = EUDEMONeutronicsCSGReactor(
-        params, ivc_shapes, blanket, vacuum_vessel, material_library
+        geometry_type=GeometryType.SN_INTEGRATED,
+        params=params,
+        blanket=blanket,
+        vacuum_vessel=vacuum_vessel,
+        materials_library=material_library,
+        op_cond=op_cond,
+        divertor=ivc_shapes,
+        panel_points=blanket.panel_points.T,
+        tally_function=tally_function,
     )
 
     solver = neutronics_code_solver(
         params,
         build_config,
-        neutronics_csg,
+        neutronics_csg.cell_arrays,
         eq,
+        material_library,
         source=source or make_tokamak_source,
         op_cond=op_cond,
         tally_function=tally_function,

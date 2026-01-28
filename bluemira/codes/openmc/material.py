@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import openmc
 
+from bluemira.base.look_and_feel import bluemira_warn
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -75,6 +77,8 @@ class MaterialsLibrary:
     outb_sf_mat: openmc.Material
     div_sf_mat: openmc.Material
     rad_shield: openmc.Material
+    inb_mz_mat: openmc.Material | None = None
+    outb_mz_mat: openmc.Material | None = None
 
     @classmethod
     def from_neutronics_materials(
@@ -141,3 +145,54 @@ class MaterialsLibrary:
             The tuple of all dataclass fields
         """
         return astuple(self)
+
+    @classmethod
+    def import_from_xml(
+        cls, material_mapping: dict | None = None, path: str | Path = "materials.xml"
+    ):
+        """
+        Import an xml file and read the materials into MaterialsLibrary
+
+        Returns
+        -------
+        MaterialsLibrary
+
+        Raises
+        ------
+        NameError
+            if material is not found in the xml file
+        """
+        database = openmc.Materials.from_xml(path)
+        material_mapping = material_mapping or {}
+
+        materials_dict = {}
+
+        for field in fields(cls):
+            # Use mapping if available, else default to field name
+            if field.name in material_mapping:
+                material_name = material_mapping[field.name]
+            else:
+                material_name = field.name
+
+            # Find material in database
+            openmc_material = next(
+                (mat for mat in database if mat.name == material_name), None
+            )
+            if not openmc_material:
+                # for now,
+                # make a mock material
+                # but raise warning
+                bluemira_warn(
+                    f"Material '{material_name}' not found in database.. Making"
+                    " a mock air material"
+                )
+
+                openmc_material = openmc.Material(name="Mock_Air")
+                openmc_material.add_element("N", 0.78)
+                openmc_material.add_element("O", 0.21)
+                openmc_material.add_element("Ar", 0.01)
+                openmc_material.set_density("g/cm3", 0.001225)
+
+            materials_dict[field.name] = openmc_material
+
+        return cls(**materials_dict)

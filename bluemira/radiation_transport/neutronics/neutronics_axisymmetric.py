@@ -13,29 +13,33 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import Parameter, ParameterFrame, make_parameter_frame
-from bluemira.geometry.plane import calculate_plane_dir
-from bluemira.geometry.tools import get_wire_plane_intersect, make_polygon
-from bluemira.radiation_transport.neutronics.make_pre_cell import PreCell
+from bluemira.codes.openmc.make_csg import (
+    BluemiraNeutronicsCSG,
+    CellStage,
+)
+from bluemira.codes.openmc.material import MaterialsLibrary
+from bluemira.codes.openmc.tallying import TALLY_FUNCTION_TYPE, filter_cells
+from bluemira.radiation_transport.neutronics.geometry import GeometryType
+from bluemira.radiation_transport.neutronics.make_pre_cell import PreCellStage
+from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 from bluemira.radiation_transport.neutronics.slicing import (
     DivertorWireAndExteriorCurve,
     PanelsAndExteriorCurve,
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    import openmc
+    from matplotlib.axes import Axes
+    from matproplib.conditions import OperationalConditions
     from numpy import typing as npt
 
     from bluemira.base.reactor import ComponentManager
     from bluemira.geometry.wire import BluemiraWire
     from bluemira.radiation_transport.neutronics.geometry import TokamakDimensions
-    from bluemira.radiation_transport.neutronics.make_pre_cell import (
-        DivertorPreCellArray,
-        PreCellArray,
-    )
-    from bluemira.radiation_transport.neutronics.materials import NeutronicsMaterials
 
 
 @dataclass
@@ -45,21 +49,23 @@ class ReactorGeometry:
 
     Parameters
     ----------
-    divertor_wire:
+    lower_divertor_inner_wire:
         The plasma-facing side of the divertor.
+        For single null configuration, this is the only divertor
     panel_break_points:
         The start and end points for each first-wall panel
         (for N panels, the shape is (N+1, 2)).
-    boundary:
+    vacuum_vessel_inner_wire:
         interface between the inside of the vacuum vessel and the outside of the blanket
     vacuum_vessel_wire:
         The outer-boundary of the vacuum vessel
     """
 
-    divertor_wire: BluemiraWire
+    lower_divertor_inner_wire: BluemiraWire
+    # For single null configuration, this is the only divertor
     panel_break_points: npt.NDArray
-    boundary: BluemiraWire
-    vacuum_vessel_wire: BluemiraWire
+    vacuum_vessel_inner_wire: BluemiraWire
+    vacuum_vessel_outer_wire: BluemiraWire
 
 
 @dataclass
@@ -69,133 +75,34 @@ class CuttingStage:
     blanket: PanelsAndExteriorCurve
     divertor: DivertorWireAndExteriorCurve
 
-
-class PreCellStage:
-    """Stage of making pre-cells"""
-
-    def __init__(self, blanket: PreCellArray, divertor: DivertorPreCellArray):
-        """Check convexity after initialization"""
-        self.blanket = blanket.copy()
-        self.divertor = divertor
-        # 1. stretch first blanket cell in PreCellArray to reach div_start_wire
-        div_start_wire = self.divertor[0].cw_wall.restore_to_wire()
-        # pull everything down to: div_start_wire.
-        # Alternatively, choose div_start_wire=self.divertor[0].outline
-        old_vv_wire = self.blanket[0].vv_wire
-        ext_pt, i_high, i_low = np.insert(self.blanket[0].vertex, 1, 0, axis=0).T[:3]
-        i_end = get_wire_plane_intersect(
-            div_start_wire, *calculate_plane_dir(i_high, i_low)
-        )
-        # v_end = get_wire_plane_intersect(
-        #     div_start_wire,
-        #     *calculate_plane_dir(old_vv_wire.end_point().xyz.flatten(),
-        #     old_vv_wire.start_point().xyz.flatten())
-        # )
-        in_wire = make_polygon(np.array([i_high, i_end]).T, closed=False)
-        vv_wire = make_polygon(
-            np.array([
-                self.divertor[0].vv_wire.end_point,
-                old_vv_wire.end_point().xyz.flatten(),
-            ]).T,
-            closed=False,
-        )
-        ex_wire = make_polygon(
-            np.array([self.divertor[0].vertex.T[0], ext_pt]).T, closed=False
-        )
-        new_start_cell = PreCell(in_wire, vv_wire, ex_wire)
-        self.blanket[0] = new_start_cell
-
-        # 2. stretch first blanket cell in PreCellArray to reach div_end_wire
-        div_end_wire = self.divertor[-1].ccw_wall.restore_to_wire()
-        old_vv_wire = self.blanket[-1].vv_wire
-        i_low, i_high, ext_pt = np.insert(self.blanket[-1].vertex, 1, 0, axis=0).T[-3:]
-        i_start = get_wire_plane_intersect(
-            div_end_wire, *calculate_plane_dir(i_high, i_low)
-        )
-        # v_end = get_wire_plane_intersect(
-        #     div_end_wire,
-        #     *calculate_plane_dir(old_vv_wire.start_point().xyz.flatten(),
-        #     old_vv_wire.end_point().xyz.flatten())
-        # )
-        in_wire = make_polygon(np.array([i_start, i_high]).T, closed=False)
-        vv_wire = make_polygon(
-            np.array([
-                old_vv_wire.start_point().xyz.flatten(),
-                self.divertor[-1].vv_wire.start_point,
-            ]).T,
-            closed=False,
-        )
-        ex_wire = make_polygon(
-            np.array([ext_pt, self.divertor[-1].vertex.T[-1]]).T, closed=False
-        )
-        new_end_cell = PreCell(in_wire, vv_wire, ex_wire)
-        self.blanket[-1] = new_end_cell
-
-        # re-initialize so that the cell_walls are re-calculated
-        self.blanket = self.blanket.copy()
-
-    def external_coordinates(self) -> npt.NDArray:
+    def create_pre_cell_stage(
+        self,
+        snap_to_horizontal_angle: float = 45,
+        blanket_discretisation: int = 10,
+        divertor_discretisation: int = 5,
+    ) -> PreCellStage:
         """
-        Get the outermost coordinates of the tokamak cross-section from pre-cell array
-        and divertor pre-cell array.
-        Runs clockwise, beginning at the inboard blanket-divertor joint.
+        Create PreCellStage
 
         Returns
         -------
-        :
-            All vertices on the exterior of the blanket and the divertor.
+        PreCellStage
         """
-        return np.concatenate([
-            self.blanket.exterior_vertices(),
-            self.divertor.exterior_vertices()[::-1],
-        ])
+        divertor = self.divertor.make_divertor_pre_cell_array(
+            discretisation_level=divertor_discretisation
+        )
+        first, last = divertor.exterior_vertices()[(0, -1),]
 
-    def bounding_box(self) -> tuple[float, ...]:
-        """
-        Get bounding box of pre cell stage
+        blanket = self.blanket.make_quadrilateral_pre_cell_array(
+            discretisation_level=blanket_discretisation,
+            starting_cut=first[::2],
+            ending_cut=last[::2],
+            snap_to_horizontal_angle=snap_to_horizontal_angle,
+        )
 
-        Returns
-        -------
-        z_max:
-            The maximum height of the bounding box.
-        z_min:
-            The minimum height of the bounding box.
-        r_max:
-            The maximum major radius reached by the pre-cells.
-        -r_max:
-            The minimum major radius reached by the pre-cells. Due to axial symmetry,
-            this must be =-r_max.
-        """
-        all_ext_vertices = self.external_coordinates()
-        z_min = all_ext_vertices[:, -1].min()
-        z_max = all_ext_vertices[:, -1].max()
-        r_max = max(abs(all_ext_vertices[:, 0]))
-        return z_max, z_min, r_max, -r_max
-
-    def half_bounding_box(self) -> tuple[float, ...]:
-        """
-        Get bounding box of the 2D poloidal cross-section of the right-hand half of the
-        reactor.
-
-        Returns
-        -------
-        z_max:
-            The maximum height of the bounding box.
-        z_min:
-            The minimum height of the bounding box.
-        r_max:
-            The maximum major radius reached by the pre-cells.
-        r_min:
-            The minimum major radius reached by the pre-cells on one side of the xz cross
-            section. This is typically non-zero because pre-cells should not cross the
-            z-axis of symmetry.
-        """
-        all_ext_vertices = self.external_coordinates()
-        z_min = all_ext_vertices[:, -1].min()
-        z_max = all_ext_vertices[:, -1].max()
-        r_max = max(abs(all_ext_vertices[:, 0]))
-        r_min = min(abs(all_ext_vertices[:, 0]))
-        return z_max, z_min, r_max, r_min
+        return PreCellStage(
+            blanket=blanket.straighten_exterior(preserve_volume=True), divertor=divertor
+        )
 
 
 @dataclass
@@ -222,86 +129,128 @@ class NeutronicsReactor(ABC):
 
     def __init__(
         self,
+        geometry_type: GeometryType,
         params: dict | ParameterFrame,
-        divertor: ComponentManager,
         blanket: ComponentManager,
         vacuum_vessel: ComponentManager,
-        materials_library: NeutronicsMaterials,
+        materials_library: NeutronicsMaterials | str | Path,
+        op_cond: OperationalConditions,
+        divertor: ComponentManager | None = None,
+        first_wall: ComponentManager | None = None,
+        panel_points: npt.NDArray | None = None,
+        material_mapping: dict | None = None,
+        tally_function: TALLY_FUNCTION_TYPE | None = None,
         *,
         snap_to_horizontal_angle: float = 45,
         blanket_discretisation: int = 10,
         divertor_discretisation: int = 5,
     ):
+        """
+        Initialises the Neutronics Reactor.
+
+        If geometry_type = GeometryType.SN_INTEGRATED, the arguments
+        first_wall, and panel_points will not be used as they are
+        considered within the blanket component.
+
+        For custom reactors, the user has the option to provide with
+        first_wall as a seperate component, with divertor considered within it
+        or not.
+
+        However, they have to make their own custom methods for cell-making or
+        getting wires, the methods are defined as an abstract method here.
+        """
         bluemira_print("Creating axisymmetric CSG neutronics model")
 
         self.params = make_parameter_frame(params, self.param_cls)
-        self.material_library = materials_library
-        (
-            self.tokamak_dimensions,
-            divertor_wire,
-            panel_points,
-            blanket_wire,
-            vacuum_vessel_wire,
-        ) = self._get_wires_from_components(divertor, blanket, vacuum_vessel)
 
-        self.geom = ReactorGeometry(
-            divertor_wire, panel_points, blanket_wire, vacuum_vessel_wire
+        if isinstance(materials_library, NeutronicsMaterials):
+            self.material_library = MaterialsLibrary.from_neutronics_materials(
+                materials_library, op_cond
+            )
+        else:
+            self.material_library = MaterialsLibrary.import_from_xml(
+                material_mapping=material_mapping, path=materials_library
+            )
+
+        self.geometry_type = geometry_type
+        self.blanket_discretisation = blanket_discretisation
+        self.divertor_discretisation = divertor_discretisation
+        self.snap_to_horizontal_angle = snap_to_horizontal_angle
+
+        (self.tokamak_dimensions, self.geom) = self._get_wires_from_components(
+            divertor, blanket, vacuum_vessel, first_wall, panel_points
         )
 
-        self._pre_cell_stage = self._create_pre_cell_stage(
-            blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
-        )
+        self.tally_func = filter_cells if tally_function is None else tally_function
 
-    def _create_pre_cell_stage(
-        self, blanket_discretisation, divertor_discretisation, snap_to_horizontal_angle
-    ):
+        if self.geometry_type == GeometryType.CUSTOM:
+            self.cell_stage = self._create_cell_stage_custom()
+        else:
+            self.cell_stage = self._create_cell_stage_default()
+
+        self.list_of_tallies = self._set_list_of_tallies()
+
+    def _create_cell_stage_default(self) -> CellStage:
+        """
+        Cut and create Precells, converts into cell stage and set Tallies
+
+        Returns
+        -------
+        CellStage
+        """
+        # Cutting and Pre-cell Stage making
         cutting = CuttingStage(
             blanket=PanelsAndExteriorCurve(
                 self.geom.panel_break_points,
-                self.geom.boundary,
-                self.geom.vacuum_vessel_wire,
+                self.geom.vacuum_vessel_inner_wire,
+                self.geom.vacuum_vessel_outer_wire,
             ),
             divertor=DivertorWireAndExteriorCurve(
-                self.geom.divertor_wire, self.geom.boundary, self.geom.vacuum_vessel_wire
+                self.geom.lower_divertor_inner_wire,
+                self.geom.vacuum_vessel_inner_wire,
+                self.geom.vacuum_vessel_outer_wire,
             ),
         )
-        divertor = cutting.divertor.make_divertor_pre_cell_array(
-            discretisation_level=divertor_discretisation
-        )
-        first, last = divertor.exterior_vertices()[(0, -1),]
 
-        blanket = cutting.blanket.make_quadrilateral_pre_cell_array(
-            discretisation_level=blanket_discretisation,
-            starting_cut=first[::2],
-            ending_cut=last[::2],
-            snap_to_horizontal_angle=snap_to_horizontal_angle,
+        self.pre_cell_stage = cutting.create_pre_cell_stage(
+            blanket_discretisation=self.blanket_discretisation,
+            divertor_discretisation=self.divertor_discretisation,
+            snap_to_horizontal_angle=self.snap_to_horizontal_angle,
         )
 
-        return PreCellStage(
-            blanket=blanket.straighten_exterior(preserve_volume=True), divertor=divertor
+        return CellStage.from_pre_cell_stage(
+            pre_cell_stage=self.pre_cell_stage,
+            tokamak_dimensions=self.tokamak_dimensions,
+            material_library=self.material_library,
+            csg=BluemiraNeutronicsCSG(),
+            control_id=True,
         )
 
-    @property
-    def bounding_box(self) -> tuple[float, ...]:
-        """Bounding box of Neutronics reactor"""
-        return self._pre_cell_stage.bounding_box()
+    @abstractmethod
+    def _get_wires_from_components(
+        self,
+        divertor: ComponentManager | None = None,
+        blanket: ComponentManager | None = None,
+        vacuum_vessel: ComponentManager | None = None,
+        first_wall: ComponentManager | None = None,
+        panel_points: npt.NDArray | None = None,
+    ) -> tuple[TokamakDimensions, ReactorGeometry]:
+        """Get wires from components"""
+        ...
 
-    @property
-    def half_bounding_box(self) -> tuple[float, ...]:
-        """Bounding box of the right-hand half of the 2D poloidal cross-section"""
-        return self._pre_cell_stage.half_bounding_box()
+    @abstractmethod
+    def _create_cell_stage_custom(self) -> CellStage:
+        """
+        Customised cell making stage
+        """
+        ...
 
-    @property
-    def blanket(self):
-        """Blanket pre cell"""
-        return self._pre_cell_stage.blanket
+    @abstractmethod
+    def _set_list_of_tallies(self) -> list[openmc.Tally] | None:
+        """Set list of tallies"""
 
-    @property
-    def divertor(self):
-        """Divertor pre cell"""
-        return self._pre_cell_stage.divertor
-
-    def plot_2d(self, *args, **kwargs):
+    @abstractmethod
+    def plot_2d(self, *args, **kwargs) -> Axes:
         """
         Plot neutronics reactor 2d profile
 
@@ -310,17 +259,4 @@ class NeutronicsReactor(ABC):
         :
             Axes on which the reactor is plotted.
         """
-        show = kwargs.pop("show", True)
-        ax = kwargs.pop("ax", None)
-        ax = self.blanket.plot_2d(*args, ax=ax, show=False, **kwargs)
-        return self.divertor.plot_2d(*args, ax=ax, show=show, **kwargs)
-
-    @abstractmethod
-    def _get_wires_from_components(
-        self,
-        divertor: ComponentManager,
-        blanket: ComponentManager,
-        vacuum_vessel: ComponentManager,
-    ) -> tuple[TokamakDimensions, BluemiraWire, npt.NDArray, BluemiraWire, BluemiraWire]:
-        """Get wires from components"""
         ...
