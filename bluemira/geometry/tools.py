@@ -2410,3 +2410,108 @@ def find_clockwise_angle_2d(base: np.ndarray, vector: np.ndarray) -> np.ndarray:
     angle = np.array(np.arctan2(det, dot))
     angle[angle < 0] += 2 * np.pi
     return np.degrees(angle)
+
+
+# ======================================================================================
+# Check if two geos are touching
+# ======================================================================================
+
+
+def check_touching_geos(
+    geo_1: BluemiraSolid | BluemiraFace,
+    geo_2: BluemiraSolid | BluemiraFace,
+    rtol: float = 1e-10,
+) -> bool:
+    """
+    Check if two geos of the same type touch each other.
+
+    Returns
+    -------
+    bool
+        True if the geos touch at any point and do not overlap,
+        else False.
+
+    Raises
+    ------
+    TypeError
+        if geo_1 and geo_2 are not of the same type
+    """
+    if type(geo_1) is not type(geo_2):
+        raise TypeError("geo_1 and geo_2 must be of the same type")
+
+    dist, _ = distance_to(geo_1, geo_2)
+    mutual_distance = bool(np.isclose(dist, 0, rtol=rtol))
+
+    # Mutual distance can be 0 if there is an overlap or they are touching.
+    # Hence also check the intersection area/volume.
+    intersection = geo_1.shape.intersect(geo_2.shape)
+
+    intersection_size = (
+        intersection.Area() if isinstance(geo_1, BluemiraFace) else intersection.Volume()
+    )
+
+    intersection_is_zero = bool(np.isclose(intersection_size, 0, rtol=rtol))
+
+    # If both the distance and intersection size are zero,
+    # they are touching without overlap.
+    return bool(mutual_distance and intersection_is_zero)
+
+
+# ======================================================================================
+# Approximately fix the overlap of two overlapping geos
+# ======================================================================================
+def repair_overlapping_geos(
+    geo_1: BluemiraSolid | BluemiraFace,
+    geos_2: list[BluemiraSolid | BluemiraFace],
+) -> BluemiraSolid | BluemiraFace:
+    """
+    Fix the overlap of geo_1 with a list of geometries in geos_2 by first
+    fusing geo_1 with all geometries in geos_2 and then subtracting the
+    union of geos_2 from the fused geometry.
+
+    Parameters
+    ----------
+    geo_1:
+        Geometry to be repaired.
+    geos_2:
+        Geometries that remain unchanged and take priority over geo_1.
+
+    Returns
+    -------
+    BluemiraSolid | BluemiraFace
+        Repaired geo_1.
+
+    Raises
+    ------
+    TypeError
+        If geo_1 and geos_2 are not of the same type.
+
+    GeometryError
+        If boolean cut creates multiple geometries.
+
+    Note
+    ------
+    The overlapping boundaries of BluemiraFace objects, or the corresponding
+    overlapping faces of BluemiraSolid objects, may form either a single
+    continuous overlap region or multiple spatially discontinuous overlap
+    regions. Applying the boolean cut directly in the latter case may
+    introduce unnecessary internal boundaries, resulting in fragmented
+    surfaces that meet like puzzle pieces rather than forming a smooth,
+    continuous interface.
+
+    Fusing geo_1 with geos_2 first combines these overlap regions into a
+    single topological representation before the subtraction, reducing
+    such fragmentation and preserving a smoother interface in the repaired
+    geo_1.
+    """
+    if not all(type(geo_1) is type(geo_2) for geo_2 in geos_2):
+        raise TypeError("geo_1 and geo_2 must be of the same type")
+
+    fused_geos_2 = boolean_fuse(geos_2) if len(geos_2) > 1 else geos_2[0]
+    fused = boolean_fuse([geo_1, fused_geos_2])
+    repaired = boolean_cut(fused, fused_geos_2)
+
+    if isinstance(repaired, list) and len(repaired) > 1:
+        raise GeometryError("boolean cut created multiple geometries")
+
+    return repaired[0] if isinstance(repaired, list) else repaired
