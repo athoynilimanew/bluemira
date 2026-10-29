@@ -6,3 +6,25 @@
 """
 Generalised axisymmetric neutronics module
 """
+
+from bluemira.radiation_transport.axisymmetric_neutronics.geometry import (
+    AxisymmetricNeutronicsGeomManager,
+)
+from bluemira.radiation_transport.axisymmetric_neutronics.materials import (
+    to_mcio_material,
+)
+from bluemira.radiation_transport.axisymmetric_neutronics.neutronics_reactor import (
+    AxisymmetricNeutronicsReactor,
+    NeutronicsModel,
+)
+from bluemira.radiation_transport.axisymmetric_neutronics.tallies import (
+    add_default_tallies,
+)
+
+__all__ = [
+    "AxisymmetricNeutronicsGeomManager",
+    "AxisymmetricNeutronicsReactor",
+    "NeutronicsModel",
+    "add_default_tallies",
+    "to_mcio_material",
+]

@@ -15,16 +15,27 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
+import mcio
 
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import ParameterFrame
-from bluemira.display.plotter import plot_2d
 from bluemira.radiation_transport.axisymmetric_neutronics.geometry import (
     AxisymmetricNeutronicsGeomManager,
 )
+from bluemira.radiation_transport.axisymmetric_neutronics.materials import (
+    to_mcio_material,
+)
+from bluemira.radiation_transport.axisymmetric_neutronics.plotting import (
+    plot_desplining_comparisons,
+)
+from bluemira.radiation_transport.axisymmetric_neutronics.tallies import (
+    add_default_tallies,
+)
 
 if TYPE_CHECKING:
+    from matproplib.conditions import OperationalConditions
+    from openmc.model.model import Model
+
     from bluemira.base.components import Component
     from bluemira.base.reactor import Reactor
 
@@ -80,6 +91,7 @@ class AxisymmetricNeutronicsReactor(ABC):
         self.params = params
         self.model = model
         self.geometry = self.get_desplined_geometry(reactor)
+        self.material_name_mapping = None
 
     def get_desplined_geometry(
         self, reactor: Reactor
@@ -110,7 +122,7 @@ class AxisymmetricNeutronicsReactor(ABC):
             neutronics_output_path = Path(
                 self.config.get("neutronics_output_path", "./outputs/")
             )
-            self.plot_desplining_comparisons(
+            plot_desplining_comparisons(
                 orig_comps=[comp.get_component("xz") for comp in all_comps],
                 desplined_comps=desplined_geometry.component().get_component(
                     "xz", first=False
@@ -132,59 +144,100 @@ class AxisymmetricNeutronicsReactor(ABC):
         ax = kwargs.pop("ax", None)
         return self.geometry.plot_2d(*args, ax=ax, show=show, **kwargs)
 
-    @staticmethod
-    def plot_desplining_comparisons(
-        orig_comps: list[Component],
-        desplined_comps: list[Component],
-        output_path: Path | None = None,
-    ):
+    def run_mcio(
+        self,
+        op_cond: OperationalConditions,
+    ) -> Model:
         """
-        Create comparison plots in the xz plane before and after
-        desplining components.
+        Runs MCIO interface to create openmc geometry for neutronics
 
-        Raises
-        ------
-        ValueError
-            if original and desplined components do not have the
-            same length
+        Returns
+        -------
+        openmc.model.model.Model
         """
-        output_path.mkdir(parents=True, exist_ok=True)
+        all_desplined_components = self.geometry.get_all_components()
 
-        if len(orig_comps) != len(desplined_comps):
-            raise ValueError(
-                "original and desplined components must have the same length."
-            )
+        all_names = [comp.name for comp in all_desplined_components]
+        all_ocp_solids = [
+            comp.get_component("xyz").children[0].shape.shape.wrapped
+            for comp in all_desplined_components
+        ]
 
-        fig, axes = plt.subplots(
-            1,
-            2,
-            figsize=(12, 6),
-            sharex=True,
-            sharey=True,
-        )
+        all_materials = [
+            comp.get_component("xyz").children[0].material
+            for comp in all_desplined_components
+        ]
 
-        for orig_comp, desplined_comp in zip(
-            orig_comps,
-            desplined_comps,
-            strict=True,
+        # set up empty decomposer (you can also add step files and ocp
+        # solids if you like)
+        decomposer = mcio.decompose.Decomposer()
+        material_name_mapping = {}
+
+        # NOTE: Every solid should have its own unique MCIO material name,
+        # even if multiple solids use the same original material.
+        bluemira_print("Adding solids to the decomposer")
+        for mat_number, (solid, mat, name) in enumerate(
+            zip(all_ocp_solids, all_materials, all_names, strict=True)
         ):
-            orig_comp.plot_2d(ax=axes[0], show=False)
-            for wire in orig_comp.leaves[0].shape.boundary:
-                plot_2d(wire.vertexes.T, ax=axes[0], show=False)
+            # Renames MCIO material to the accepted format, e.g. "m0", "m1", ...
+            mcio_material = to_mcio_material(mat, op_cond, mat_number + 1)
+            decomposer.add_solid(solid, name=name, material=mcio_material)
 
-            desplined_comp.plot_2d(ax=axes[1], show=False)
-            for wire in desplined_comp.leaves[0].shape.boundary:
-                plot_2d(wire.vertexes.T, ax=axes[1], show=False)
+            # Map original component name to MCIO material name
+            material_name_mapping[name] = mcio_material.name
 
-        axes[0].set_title("Original")
-        axes[1].set_title("Desplined")
+        # save material mapping
+        self.material_name_mapping = material_name_mapping
 
-        fig.tight_layout()
+        # run decomposer to generate void and model
+        bluemira_print("Running decomposer")
+        decomposer.run()
 
-        plot_path = output_path / "desplining_comparisons.png"
-        fig.savefig(plot_path, bbox_inches="tight")
+        # get the openmc model
+        openmc_model = decomposer.model.openmc_model
 
-        bluemira_print(f"Plotted desplining comparisons as {plot_path}")
+        # Add Tallies
+        bluemira_print("Adding Tallies")
+        add_default_tallies(
+            model=openmc_model, material_name_mapping=self.material_name_mapping
+        )
+        # optional
+        self.customised_tallies(openmc_model)
+
+        # Export xml files
+        # Reuse equivalent filter objects across all tallies to avoid OpenMC
+        # reassigning filter IDs during XML export and triggering IDWarning.
+        unique_filters = {}
+
+        for tally in openmc_model.tallies:
+            tally.filters = [
+                unique_filters.setdefault(filter_, filter_) for filter_ in tally.filters
+            ]
+
+        xml_path = self.config.get("neutronics_output_path", "./csg_outputs/")
+        openmc_model.export_to_xml(xml_path)
+
+        # Plot xml
+        bluemira_print("Plotting MCIO generated CSG model")
+        ax = openmc_model.plot(
+            basis="xz",
+            color_by="cell",
+            origin=(0.0, 0.0, 0.0),  # centre: x, y, z
+            width=(30, 30.0),  # total X width, total Z width
+            pixels=(2000, 2000),
+        )
+        ax.figure.savefig(f"{xml_path}/csg_plot.png")
+
+        return openmc_model
+
+    @abstractmethod
+    def customised_tallies(self, model):
+        """
+        Abstract Methods for user to be able
+        to add customised tallies for their particular
+        reactor
+        """
+        ...
 
     @abstractmethod
     def get_all_components(self, reactor: Reactor) -> list[Component]:
