@@ -19,7 +19,6 @@ import mcio
 
 from bluemira.base.look_and_feel import bluemira_print
 from bluemira.base.parameter_frame import ParameterFrame, make_parameter_frame
-from bluemira.display.plotter import plot_2d
 from bluemira.radiation_transport.axisymmetric_neutronics.geometry import (
     AxisymmetricNeutronicsGeomManager,
 )
@@ -219,7 +218,8 @@ class AxisymmetricNeutronicsReactor(ABC):
 
         Returns
         -------
-        openmc.model.model.Model
+        :
+            openmc Model
         """
         all_desplined_components = self.geometry.get_all_components()
 
@@ -312,7 +312,7 @@ class AxisymmetricNeutronicsReactor(ABC):
 
         Returns
         -------
-        list
+        :
             list of components.
         """
         ...
@@ -325,6 +325,7 @@ class AxisymmetricNeutronicsReactor(ABC):
 
         Returns
         -------
-        int
+        :
+            default discretisation
         """
         ...
